@@ -294,6 +294,11 @@ public class Config
     public boolean start_native_transport = true;
     public int native_transport_port = 9042;
     public int native_transport_max_threads = 128;
+
+    // Web Interface Configuration (PoC)
+    public boolean web_interface_enabled = false;
+    public int web_interface_port = 8080;
+    public String web_interface_bind_address = "127.0.0.1";
     @Replaces(oldName = "native_transport_max_frame_size_in_mb", converter = Converters.MEBIBYTES_DATA_STORAGE_INT, deprecated = true)
     public DataStorageSpec.IntMebibytesBound native_transport_max_frame_size = new DataStorageSpec.IntMebibytesBound("16MiB");
     /** do bcrypt hashing in a limited pool to prevent cpu load spikes; note: any value < 1 will be set to 1 on init **/

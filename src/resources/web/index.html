@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cassandra Web Interface</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .status-card {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .status-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #495057;
+        }
+        .status-value {
+            font-family: 'Monaco', 'Consolas', monospace;
+            background: #e9ecef;
+            padding: 10px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+        .health-up { color: #28a745; }
+        .health-down { color: #dc3545; }
+        .loading { color: #6c757d; }
+        .error { color: #dc3545; }
+        .refresh-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        .refresh-btn:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🗃️ Cassandra Web Interface</h1>
+        <p>Basic monitoring dashboard for your Cassandra node.</p>
+        
+        <div class="status-card">
+            <div class="status-title">Health Status</div>
+            <div id="health-status" class="status-value loading">Loading...</div>
+        </div>
+        
+        <div class="status-card">
+            <div class="status-title">Node Information</div>
+            <div id="node-status" class="status-value loading">Loading...</div>
+        </div>
+        
+        <button class="refresh-btn" onclick="refreshData()">Refresh Data</button>
+    </div>
+
+    <script>
+        // Fetch health status
+        async function fetchHealth() {
+            try {
+                const response = await fetch('/health');
+                const data = await response.json();
+                const healthElement = document.getElementById('health-status');
+                
+                if (data.status === 'UP') {
+                    healthElement.className = 'status-value health-up';
+                    healthElement.textContent = '✅ ' + JSON.stringify(data, null, 2);
+                } else {
+                    healthElement.className = 'status-value health-down';
+                    healthElement.textContent = '❌ ' + JSON.stringify(data, null, 2);
+                }
+            } catch (error) {
+                document.getElementById('health-status').className = 'status-value error';
+                document.getElementById('health-status').textContent = 'Error: ' + error.message;
+            }
+        }
+
+        // Fetch node status
+        async function fetchNodeStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                const statusElement = document.getElementById('node-status');
+                
+                // Format the data nicely
+                const formatted = {
+                    'Cluster Name': data.cluster,
+                    'Host ID': data.hostId,
+                    'RPC Address': data.rpcAddress,
+                    'Uptime': formatUptime(data.uptimeMillis)
+                };
+                
+                statusElement.className = 'status-value';
+                statusElement.textContent = JSON.stringify(formatted, null, 2);
+            } catch (error) {
+                document.getElementById('node-status').className = 'status-value error';
+                document.getElementById('node-status').textContent = 'Error: ' + error.message;
+            }
+        }
+
+        // Format uptime in a human-readable way
+        function formatUptime(milliseconds) {
+            const seconds = Math.floor(milliseconds / 1000);
+            const minutes = Math.floor(seconds / 60);
+            const hours = Math.floor(minutes / 60);
+            const days = Math.floor(hours / 24);
+            
+            if (days > 0) {
+                return `${days}d ${hours % 24}h ${minutes % 60}m ${seconds % 60}s`;
+            } else if (hours > 0) {
+                return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+            } else if (minutes > 0) {
+                return `${minutes}m ${seconds % 60}s`;
+            } else {
+                return `${seconds}s`;
+            }
+        }
+
+        // Refresh all data
+        function refreshData() {
+            document.getElementById('health-status').className = 'status-value loading';
+            document.getElementById('health-status').textContent = 'Loading...';
+            document.getElementById('node-status').className = 'status-value loading';
+            document.getElementById('node-status').textContent = 'Loading...';
+            
+            fetchHealth();
+            fetchNodeStatus();
+        }
+
+        // Load data when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            refreshData();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(refreshData, 30000);
+        });
+    </script>
+</body>
+</html>

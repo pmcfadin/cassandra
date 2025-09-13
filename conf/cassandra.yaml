@@ -1008,6 +1008,16 @@ native_transport_allow_older_protocols: true
 # Min unit: ms
 # native_transport_idle_timeout: 60000ms
 
+# Web Interface Configuration (PoC)
+# Whether to start the web interface server.
+# The web interface provides basic health and status endpoints via HTTP.
+# For security reasons, this is disabled by default and binds to localhost only when enabled.
+web_interface_enabled: false
+# port for the web interface HTTP server to listen on
+web_interface_port: 8080
+# The address on which the web interface is bound
+web_interface_bind_address: 127.0.0.1
+
 # When enabled, limits the number of native transport requests dispatched for processing per second.
 # Behavior once the limit has been breached depends on the value of THROW_ON_OVERLOAD specified in
 # the STARTUP message sent by the client during connection establishment. (See section "4.1.1. STARTUP"

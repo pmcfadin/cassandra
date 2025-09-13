@@ -3290,6 +3290,22 @@ public class DatabaseDescriptor
         conf.native_transport_port = port;
     }
 
+    // Web Interface Configuration
+    public static boolean getWebInterfaceEnabled()
+    {
+        return conf.web_interface_enabled;
+    }
+
+    public static int getWebInterfacePort()
+    {
+        return conf.web_interface_port;
+    }
+
+    public static String getWebInterfaceBindAddress()
+    {
+        return conf.web_interface_bind_address;
+    }
+
     public static int getNativeTransportMaxThreads()
     {
         return conf.native_transport_max_threads;

@@ -216,6 +216,7 @@ public class CassandraDaemon
     static final CassandraDaemon instance = new CassandraDaemon();
 
     private volatile NativeTransportService nativeTransportService;
+    private volatile WebInterfaceService webInterfaceService;
     private JMXConnectorServer jmxServer;
 
     private final boolean runManaged;
@@ -574,6 +575,10 @@ public class CassandraDaemon
         // Native transport
         if (nativeTransportService == null)
             nativeTransportService = new NativeTransportService();
+
+        // Web interface
+        if (webInterfaceService == null && DatabaseDescriptor.getWebInterfaceEnabled())
+            webInterfaceService = new WebInterfaceService();
     }
 
     /*
@@ -717,6 +722,8 @@ public class CassandraDaemon
         stopNativeTransport();
         if (nativeTransportService != null)
             nativeTransportService.destroy();
+        if (webInterfaceService != null)
+            webInterfaceService.destroy();
     }
 
     /**
@@ -849,6 +856,10 @@ public class CassandraDaemon
         // this might in practice start all servers which are not started yet
         nativeTransportService.start();
 
+        // Start web interface if enabled
+        if (webInterfaceService != null && !webInterfaceService.isRunning())
+            webInterfaceService.start();
+
         // interact with gossip only in case if no server was started before to signal they are started now
         if (!alreadyRunning)
             StorageService.instance.setRpcReady(true);
@@ -864,6 +875,8 @@ public class CassandraDaemon
     {
         if (nativeTransportService != null)
             nativeTransportService.stop(force);
+        if (webInterfaceService != null)
+            webInterfaceService.stop(force);
     }
 
     public boolean isNativeTransportRunning()
