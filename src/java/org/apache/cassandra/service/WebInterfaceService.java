@@ -33,6 +33,14 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.utils.JsonUtils;
+import org.apache.cassandra.web.api.JmxMetricsReader;
+import org.apache.cassandra.web.api.dto.CompactionMetricsDto;
+import org.apache.cassandra.web.api.dto.OpsMetricsDto;
+import org.apache.cassandra.web.api.dto.RingDto;
+import org.apache.cassandra.web.api.dto.TablesDto;
+import org.apache.cassandra.web.api.dto.SettingsDto;
+import org.apache.cassandra.web.api.dto.CapabilitiesDto;
 
 /**
  * Handles web interface server lifecycle and associated resources. Lazily initialized.
@@ -63,10 +71,28 @@ public class WebInterfaceService
 
             // Add health endpoint
             server.createContext("/health", new HealthHandler());
-            
-            // Add status endpoint  
+
+            // Add status endpoint
             server.createContext("/api/status", new StatusHandler());
-            
+
+            // Add ops metrics endpoint
+            server.createContext("/api/ops", new OpsHandler());
+
+            // Add compaction metrics endpoint
+            server.createContext("/api/compaction", new CompactionHandler());
+
+            // Add ring/topology endpoint
+            server.createContext("/api/ring", new RingHandler());
+
+            // Add tables metrics endpoint
+            server.createContext("/api/tables", new TablesHandler());
+
+            // Add settings endpoint
+            server.createContext("/api/settings", new SettingsHandler());
+
+            // Add capabilities endpoint
+            server.createContext("/api/capabilities", new CapabilitiesHandler());
+
             // Add static file handler for root path
             server.createContext("/", new StaticFileHandler());
 
@@ -355,6 +381,252 @@ public class WebInterfaceService
             {
                 return "text/plain; charset=utf-8";
             }
+        }
+    }
+
+    /**
+     * Operations metrics endpoint handler
+     */
+    private static class OpsHandler implements HttpHandler
+    {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException
+        {
+            try
+            {
+                if (!"GET".equals(exchange.getRequestMethod()))
+                {
+                    exchange.sendResponseHeaders(405, -1);
+                    return;
+                }
+
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.getResponseHeaders().set("Cache-Control", "no-store");
+
+                OpsMetricsDto metrics = JmxMetricsReader.readOpsMetrics();
+                String response = JsonUtils.JSON_OBJECT_MAPPER.writeValueAsString(metrics);
+
+                exchange.sendResponseHeaders(200, response.length());
+                OutputStream os = exchange.getResponseBody();
+                os.write(response.getBytes(StandardCharsets.UTF_8));
+                os.close();
+            }
+            catch (Exception e)
+            {
+                LoggerFactory.getLogger(OpsHandler.class).error("Error handling ops request", e);
+                sendErrorResponse(exchange, 503, "unavailable");
+            }
+        }
+    }
+
+    /**
+     * Compaction metrics endpoint handler
+     */
+    private static class CompactionHandler implements HttpHandler
+    {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException
+        {
+            try
+            {
+                if (!"GET".equals(exchange.getRequestMethod()))
+                {
+                    exchange.sendResponseHeaders(405, -1);
+                    return;
+                }
+
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.getResponseHeaders().set("Cache-Control", "no-store");
+
+                CompactionMetricsDto metrics = JmxMetricsReader.readCompactionMetrics();
+                String response = JsonUtils.JSON_OBJECT_MAPPER.writeValueAsString(metrics);
+
+                exchange.sendResponseHeaders(200, response.length());
+                OutputStream os = exchange.getResponseBody();
+                os.write(response.getBytes(StandardCharsets.UTF_8));
+                os.close();
+            }
+            catch (Exception e)
+            {
+                LoggerFactory.getLogger(CompactionHandler.class).error("Error handling compaction request", e);
+                sendErrorResponse(exchange, 503, "unavailable");
+            }
+        }
+    }
+
+    /**
+     * Ring/topology endpoint handler
+     */
+    private static class RingHandler implements HttpHandler
+    {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException
+        {
+            try
+            {
+                if (!"GET".equals(exchange.getRequestMethod()))
+                {
+                    exchange.sendResponseHeaders(405, -1);
+                    return;
+                }
+
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.getResponseHeaders().set("Cache-Control", "no-store");
+
+                RingDto ring = JmxMetricsReader.readRingInfo();
+                String response = JsonUtils.JSON_OBJECT_MAPPER.writeValueAsString(ring);
+
+                exchange.sendResponseHeaders(200, response.length());
+                OutputStream os = exchange.getResponseBody();
+                os.write(response.getBytes(StandardCharsets.UTF_8));
+                os.close();
+            }
+            catch (Exception e)
+            {
+                LoggerFactory.getLogger(RingHandler.class).error("Error handling ring request", e);
+                sendErrorResponse(exchange, 503, "unavailable");
+            }
+        }
+    }
+
+    /**
+     * Tables metrics endpoint handler
+     */
+    private static class TablesHandler implements HttpHandler
+    {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException
+        {
+            try
+            {
+                if (!"GET".equals(exchange.getRequestMethod()))
+                {
+                    exchange.sendResponseHeaders(405, -1);
+                    return;
+                }
+
+                // Parse keyspace filter from query parameters
+                String query = exchange.getRequestURI().getQuery();
+                String keyspaceFilter = null;
+                if (query != null && query.contains("keyspace="))
+                {
+                    String[] params = query.split("&");
+                    for (String param : params)
+                    {
+                        if (param.startsWith("keyspace="))
+                        {
+                            keyspaceFilter = param.substring("keyspace=".length());
+                            break;
+                        }
+                    }
+                }
+
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.getResponseHeaders().set("Cache-Control", "no-store");
+
+                TablesDto tables = JmxMetricsReader.readTablesInfo(keyspaceFilter);
+                String response = JsonUtils.JSON_OBJECT_MAPPER.writeValueAsString(tables);
+
+                exchange.sendResponseHeaders(200, response.length());
+                OutputStream os = exchange.getResponseBody();
+                os.write(response.getBytes(StandardCharsets.UTF_8));
+                os.close();
+            }
+            catch (Exception e)
+            {
+                LoggerFactory.getLogger(TablesHandler.class).error("Error handling tables request", e);
+                sendErrorResponse(exchange, 503, "unavailable");
+            }
+        }
+    }
+
+    /**
+     * Settings endpoint handler
+     */
+    private static class SettingsHandler implements HttpHandler
+    {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException
+        {
+            try
+            {
+                if (!"GET".equals(exchange.getRequestMethod()))
+                {
+                    exchange.sendResponseHeaders(405, -1);
+                    return;
+                }
+
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.getResponseHeaders().set("Cache-Control", "no-store");
+
+                SettingsDto settings = JmxMetricsReader.readSettings();
+                String response = JsonUtils.JSON_OBJECT_MAPPER.writeValueAsString(settings);
+
+                exchange.sendResponseHeaders(200, response.length());
+                OutputStream os = exchange.getResponseBody();
+                os.write(response.getBytes(StandardCharsets.UTF_8));
+                os.close();
+            }
+            catch (Exception e)
+            {
+                LoggerFactory.getLogger(SettingsHandler.class).error("Error handling settings request", e);
+                sendErrorResponse(exchange, 503, "unavailable");
+            }
+        }
+    }
+
+    /**
+     * Capabilities endpoint handler
+     */
+    private static class CapabilitiesHandler implements HttpHandler
+    {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException
+        {
+            try
+            {
+                if (!"GET".equals(exchange.getRequestMethod()))
+                {
+                    exchange.sendResponseHeaders(405, -1);
+                    return;
+                }
+
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.getResponseHeaders().set("Cache-Control", "no-store");
+
+                CapabilitiesDto capabilities = JmxMetricsReader.readCapabilities();
+                String response = JsonUtils.JSON_OBJECT_MAPPER.writeValueAsString(capabilities);
+
+                exchange.sendResponseHeaders(200, response.length());
+                OutputStream os = exchange.getResponseBody();
+                os.write(response.getBytes(StandardCharsets.UTF_8));
+                os.close();
+            }
+            catch (Exception e)
+            {
+                LoggerFactory.getLogger(CapabilitiesHandler.class).error("Error handling capabilities request", e);
+                sendErrorResponse(exchange, 503, "unavailable");
+            }
+        }
+    }
+
+    /**
+     * Helper method to send error responses
+     */
+    private static void sendErrorResponse(HttpExchange exchange, int statusCode, String error) throws IOException
+    {
+        try
+        {
+            String errorResponse = String.format("{\"error\":\"%s\"}", error);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(statusCode, errorResponse.length());
+            OutputStream os = exchange.getResponseBody();
+            os.write(errorResponse.getBytes(StandardCharsets.UTF_8));
+            os.close();
+        }
+        catch (Exception ex)
+        {
+            LoggerFactory.getLogger(WebInterfaceService.class).error("Error sending error response", ex);
         }
     }
 }
