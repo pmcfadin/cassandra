@@ -108,7 +108,7 @@ public class ClusterMetadataService
 {
     private static final Logger logger = LoggerFactory.getLogger(ClusterMetadataService.class);
 
-    private static ClusterMetadataService instance;
+    private static volatile ClusterMetadataService instance;
     private static Throwable trace;
 
     public static void setInstance(ClusterMetadataService newInstance)
