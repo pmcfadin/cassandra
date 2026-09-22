@@ -82,6 +82,7 @@ import org.apache.cassandra.service.accord.IAccordService.IAccordResult;
 import org.apache.cassandra.service.accord.txn.TxnResult;
 import org.apache.cassandra.service.consensus.migration.ConsensusMigrationMutationHelper;
 import org.apache.cassandra.service.consensus.migration.ConsensusMigrationMutationHelper.SplitMutations;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.transport.Dispatcher;
 import org.apache.cassandra.utils.Clock;
@@ -158,6 +159,10 @@ public class BatchlogManager implements BatchlogManagerMBean
 
     public static void store(Batch batch, boolean durableWrites)
     {
+        // Validate every mutation before constructing or persisting the batch
+        // log row. Remote batches are still encoded, so decode them here rather
+        // than allowing an opaque mutation to bypass ownership admission.
+        validateBatchMutations(batch);
         List<ByteBuffer> mutations = new ArrayList<>(batch.encodedMutations.size() + batch.decodedMutations.size());
         mutations.addAll(batch.encodedMutations);
 
@@ -182,6 +187,28 @@ public class BatchlogManager implements BatchlogManagerMBean
                .appendAll("mutations", mutations);
 
         builder.buildAsMutation().apply(durableWrites);
+    }
+
+    private static void validateBatchMutations(Batch batch)
+    {
+        for (Mutation mutation : batch.decodedMutations)
+            TransactionDomainGuard.check(mutation, "batchlog journaling");
+
+        if (!TransactionDomainGuard.hasReservations())
+            return;
+
+        for (ByteBuffer serialized : batch.encodedMutations)
+        {
+            try (DataInputBuffer in = new DataInputBuffer(serialized, true))
+            {
+                TransactionDomainGuard.check(Mutation.serializer.deserialize(in, MessagingService.current_version),
+                                             "batchlog journaling");
+            }
+            catch (IOException e)
+            {
+                throw new IllegalArgumentException("Unable to validate encoded batchlog mutation", e);
+            }
+        }
     }
 
     @VisibleForTesting
@@ -518,6 +545,10 @@ public class BatchlogManager implements BatchlogManagerMBean
         // truncated.
         private static void addMutation(List<Mutation> unsplitMutations, long writtenAt, Mutation mutation)
         {
+            // Validate before truncation filtering.  A reserved table must not
+            // disappear from a replay record and make the batch look safely
+            // delivered; the batch row remains for explicit operator review.
+            TransactionDomainGuard.check(mutation, "batchlog replay");
             for (TableId tableId : mutation.getTableIds())
                 if (writtenAt <= SystemKeyspace.getTruncatedAt(tableId))
                     mutation = mutation.without(tableId);

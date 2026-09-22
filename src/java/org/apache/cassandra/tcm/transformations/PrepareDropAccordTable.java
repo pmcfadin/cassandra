@@ -27,6 +27,7 @@ import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.schema.DistributedSchema;
 import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tcm.Transformation;
 import org.apache.cassandra.tcm.sequences.DropAccordTable;
@@ -55,6 +56,11 @@ public class PrepareDropAccordTable implements Transformation
     @Override
     public Result execute(ClusterMetadata prev)
     {
+        if (prev.consistencyDomains.forTable(tableRef.id) != null ||
+            TransactionDomainGuard.isReserved(prev.schema.getKeyspaces().getTableOrViewNullable(tableRef.id)))
+            return new Rejected(ExceptionCode.INVALID,
+                                "Transaction domain is PREPARED (closed); Accord table drop is not admitted");
+
         TableMetadata metadata = prev.schema.getKeyspaces().getTableOrViewNullable(tableRef.id);
         if (metadata == null)
             return new Rejected(ExceptionCode.INVALID, "Table " + tableRef + " is not known");

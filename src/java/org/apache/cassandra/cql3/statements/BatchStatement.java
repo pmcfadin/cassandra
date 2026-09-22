@@ -79,6 +79,7 @@ import org.apache.cassandra.service.PreserveTimestamp;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.service.TimestampSource;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.transport.Dispatcher;
@@ -499,6 +500,7 @@ public class BatchStatement implements CQLStatement.CompositeCQLStatement
 
     public ResultMessage execute(QueryState queryState, BatchQueryOptions options, Dispatcher.RequestTime requestTime)
     {
+        TransactionDomainGuard.checkTables(updatedColumns.keySet(), hasConditions ? "BATCH CAS" : "BATCH");
         long timestamp = options.getTimestamp(queryState);
         long nowInSeconds = options.getNowInSeconds(queryState);
 
@@ -688,6 +690,7 @@ public class BatchStatement implements CQLStatement.CompositeCQLStatement
 
     private ResultMessage executeInternalWithoutCondition(QueryState queryState, BatchQueryOptions batchOptions, Dispatcher.RequestTime requestTime)
     {
+        TransactionDomainGuard.checkTables(updatedColumns.keySet(), "internal BATCH");
         long timestamp = batchOptions.getTimestamp(queryState);
         long nowInSeconds = batchOptions.getNowInSeconds(queryState);
 
@@ -698,6 +701,7 @@ public class BatchStatement implements CQLStatement.CompositeCQLStatement
 
     private ResultMessage executeInternalWithConditions(BatchQueryOptions options, QueryState state, Dispatcher.RequestTime requestTime)
     {
+        TransactionDomainGuard.checkTables(updatedColumns.keySet(), "internal BATCH CAS");
         Pair<CQL3CasRequest, Set<ColumnMetadata>> p = makeCasRequest(options, state, requestTime);
         CQL3CasRequest request = p.left;
         Set<ColumnMetadata> columnsWithConditions = p.right;

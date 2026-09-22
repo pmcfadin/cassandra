@@ -60,6 +60,7 @@ import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.security.EncryptionContext;
 import org.apache.cassandra.service.DiskErrorsHandlerService;
 import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.utils.MBeanWrapper;
 import org.apache.cassandra.utils.concurrent.UncheckedInterruptedException;
 
@@ -301,6 +302,8 @@ public class CommitLog implements CommitLogMBean
     public CommitLogPosition add(Mutation mutation) throws CDCWriteException
     {
         assert mutation != null;
+
+        TransactionDomainGuard.check(mutation, "commit log append");
 
         mutation.validateSize(MessagingService.current_version, ENTRY_OVERHEAD_SIZE);
 

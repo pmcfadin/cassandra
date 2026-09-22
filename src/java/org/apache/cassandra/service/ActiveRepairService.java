@@ -105,6 +105,7 @@ import org.apache.cassandra.repair.state.ValidationState;
 import org.apache.cassandra.schema.ReplicationParams;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.service.disk.usage.DiskUsageMonitor;
 import org.apache.cassandra.service.paxos.PaxosRepair;
 import org.apache.cassandra.service.paxos.cleanup.PaxosCleanup;
@@ -472,6 +473,12 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
                                              Scheduler validationScheduler,
                                              String... cfnames)
     {
+        for (String cfname : cfnames)
+        {
+            TableMetadata table = ClusterMetadata.current().schema.getTableMetadata(keyspace, cfname);
+            if (table != null)
+                TransactionDomainGuard.check(table, "repair");
+        }
         if (repairPaxos && previewKind != PreviewKind.NONE)
             throw new IllegalArgumentException("cannot repair paxos in a preview repair");
 
@@ -699,6 +706,11 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
 
     public Future<?> prepareForRepair(TimeUUID parentRepairSession, InetAddressAndPort coordinator, Set<InetAddressAndPort> endpoints, RepairOption options, boolean isForcedRepair, List<ColumnFamilyStore> columnFamilyStores)
     {
+        List<TableId> tableIds = new ArrayList<>(columnFamilyStores.size());
+        for (ColumnFamilyStore cfs : columnFamilyStores)
+            tableIds.add(cfs.metadata.id);
+        TransactionDomainGuard.checkTables(tableIds, "repair");
+
         if (!verifyDiskHeadroomThreshold(parentRepairSession, options.getPreviewKind()))
             failRepair(parentRepairSession, "Rejecting incoming repair, disk usage above threshold"); // failRepair throws exception
 
@@ -712,12 +724,8 @@ public class ActiveRepairService implements IEndpointStateChangeSubscriber, IFai
         AsyncPromise<Void> promise = new AsyncPromise<>();
 
         Set<IPartitioner> partitioners = new HashSet<>(1);
-        List<TableId> tableIds = new ArrayList<>(columnFamilyStores.size());
         for (ColumnFamilyStore cfs : columnFamilyStores)
-        {
-            tableIds.add(cfs.metadata.id);
             partitioners.add(cfs.getPartitioner());
-        }
 
         if (partitioners.size() > 1)
             failRepair(parentRepairSession, "The tables involved in repair are configured with multiple partitioners.");

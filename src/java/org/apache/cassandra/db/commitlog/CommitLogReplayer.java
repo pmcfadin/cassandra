@@ -58,6 +58,7 @@ import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.schema.TableMetadataRef;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.WrappedRunnable;
 import org.apache.cassandra.utils.concurrent.Future;
@@ -290,6 +291,10 @@ public class CommitLogReplayer implements CommitLogReadHandler
             {
                 public void runMayThrow()
                 {
+                    // A legacy replay record has no provider admission context.  Fail explicitly rather than
+                    // silently dropping a record or replaying it as an ordinary Cassandra mutation.
+                    TransactionDomainGuard.check(mutation, "commit log replay");
+
                     if (Schema.instance.getKeyspaceMetadata(mutation.getKeyspaceName()) == null)
                         return;
                     if (commitLogReplayer.pointInTimeExceeded(mutation))

@@ -32,12 +32,15 @@ import org.apache.cassandra.locator.RangesAtEndpoint;
 import org.apache.cassandra.repair.messages.RepairMessage;
 import org.apache.cassandra.repair.messages.SyncResponse;
 import org.apache.cassandra.repair.state.SyncState;
+import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.streaming.PreviewKind;
 import org.apache.cassandra.streaming.StreamEvent;
 import org.apache.cassandra.streaming.StreamEventHandler;
 import org.apache.cassandra.streaming.StreamOperation;
 import org.apache.cassandra.streaming.StreamPlan;
 import org.apache.cassandra.streaming.StreamState;
+import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.utils.TimeUUID;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
@@ -92,6 +95,9 @@ public class StreamingRepairTask implements Runnable, StreamEventHandler
     @VisibleForTesting
     StreamPlan createStreamPlan(InetAddressAndPort dest)
     {
+        TableMetadata table = ClusterMetadata.current().schema.getTableMetadata(desc.keyspace, desc.columnFamily);
+        if (table != null)
+            TransactionDomainGuard.check(table, "repair streaming");
         state.phase.planning();
         StreamPlan sp = new StreamPlan(StreamOperation.REPAIR, 1, false, pendingRepair, previewKind)
                .listeners(this)

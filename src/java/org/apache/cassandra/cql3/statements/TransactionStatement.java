@@ -18,33 +18,25 @@
 
 package org.apache.cassandra.cql3.statements;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.SortedSet;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import javax.annotation.Nullable;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 
-import org.agrona.collections.Int2ObjectHashMap;
 import org.slf4j.LoggerFactory;
-
-import accord.api.Key;
-import accord.primitives.Keys;
-import accord.primitives.Routable.Domain;
-import accord.primitives.Txn;
 
 import org.apache.cassandra.audit.AuditLogContext;
 import org.apache.cassandra.audit.AuditLogEntryType;
@@ -61,57 +53,45 @@ import org.apache.cassandra.cql3.transactions.ConditionStatement;
 import org.apache.cassandra.cql3.transactions.ReferenceOperation;
 import org.apache.cassandra.cql3.transactions.RowDataReference;
 import org.apache.cassandra.cql3.transactions.SelectReferenceSource;
+import org.apache.cassandra.db.Clustering;
 import org.apache.cassandra.db.Columns;
-import org.apache.cassandra.db.ConsistencyLevel;
+import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.SinglePartitionReadCommand;
 import org.apache.cassandra.db.SinglePartitionReadQuery;
 import org.apache.cassandra.db.filter.DataLimits;
 import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.dht.Token;
-import org.apache.cassandra.exceptions.InvalidRequestException;
+import org.apache.cassandra.db.partitions.FilteredPartition;
+import org.apache.cassandra.db.partitions.PartitionUpdate;
+import org.apache.cassandra.db.rows.Row;
+import org.apache.cassandra.db.rows.RowIterator;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableId;
-import org.apache.cassandra.schema.TableParams;
+import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.ClientState;
-import org.apache.cassandra.service.PreserveTimestamp;
 import org.apache.cassandra.service.QueryState;
-import org.apache.cassandra.service.accord.AccordService;
-import org.apache.cassandra.service.accord.api.PartitionKey;
-import org.apache.cassandra.service.accord.serializers.TableMetadatas;
-import org.apache.cassandra.service.accord.serializers.TableMetadatasAndKeys;
-import org.apache.cassandra.service.accord.txn.AccordUpdate;
-import org.apache.cassandra.service.accord.txn.TxnCondition;
-import org.apache.cassandra.service.accord.txn.TxnDataKeyValue;
-import org.apache.cassandra.service.accord.txn.TxnDataResult;
-import org.apache.cassandra.service.accord.txn.TxnNamedRead;
-import org.apache.cassandra.service.accord.txn.TxnQuery;
-import org.apache.cassandra.service.accord.txn.TxnRead;
-import org.apache.cassandra.service.accord.txn.TxnReference;
-import org.apache.cassandra.service.accord.txn.TxnResult;
-import org.apache.cassandra.service.accord.txn.TxnUpdate;
-import org.apache.cassandra.service.accord.txn.TxnValidationRejection;
-import org.apache.cassandra.service.accord.txn.TxnWrite;
-import org.apache.cassandra.service.consensus.TransactionalMode;
-import org.apache.cassandra.service.consensus.migration.TransactionalMigrationFromMode;
-import org.apache.cassandra.tcm.ClusterMetadata;
+import org.apache.cassandra.service.consensus.txn.TransactionCondition;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
+import org.apache.cassandra.service.consensus.txn.TransactionExecutionContext;
+import org.apache.cassandra.service.consensus.txn.TransactionOperation;
+import org.apache.cassandra.service.consensus.txn.TransactionOutcome;
+import org.apache.cassandra.service.consensus.txn.TransactionPlan;
+import org.apache.cassandra.service.consensus.txn.TransactionProvider;
+import org.apache.cassandra.service.consensus.txn.TransactionProviderRegistry;
+import org.apache.cassandra.service.consensus.txn.TransactionProviders;
+import org.apache.cassandra.service.consensus.txn.TransactionReference;
 import org.apache.cassandra.tcm.Epoch;
 import org.apache.cassandra.transport.Dispatcher;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.NoSpamLogger;
 
-import static accord.primitives.Txn.Kind.Read;
-import static com.google.common.base.Preconditions.checkArgument;
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkFalse;
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkNotNull;
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkTrue;
 import static org.apache.cassandra.cql3.statements.RequestValidations.invalidRequest;
-import static org.apache.cassandra.service.accord.txn.TxnData.TxnDataNameKind.AUTO_READ;
-import static org.apache.cassandra.service.accord.txn.TxnData.TxnDataNameKind.RETURNING;
-import static org.apache.cassandra.service.accord.txn.TxnData.TxnDataNameKind.USER;
-import static org.apache.cassandra.service.accord.txn.TxnData.txnDataName;
-import static org.apache.cassandra.service.accord.txn.TxnRead.createTxnRead;
-import static org.apache.cassandra.service.accord.txn.TxnResult.Kind.retry_new_protocol;
-import static org.apache.cassandra.service.consensus.migration.ConsensusRequestRouter.shouldReadEphemerally;
+import static org.apache.cassandra.service.consensus.txn.TransactionReadSlot.Kind.AUTO_READ;
+import static org.apache.cassandra.service.consensus.txn.TransactionReadSlot.Kind.RETURNING;
+import static org.apache.cassandra.service.consensus.txn.TransactionReadSlot.Kind.USER;
+import static org.apache.cassandra.service.consensus.txn.TransactionReadSlot.id;
 
 public class TransactionStatement implements CQLStatement.CompositeCQLStatement, CQLStatement.ReturningCQLStatement
 {
@@ -159,8 +139,6 @@ public class TransactionStatement implements CQLStatement.CompositeCQLStatement,
 
     private final VariableSpecifications bindVariables;
     private final ResultSet.ResultMetadata resultMetadata;
-
-    private long minEpoch = Epoch.EMPTY.getEpoch();
 
     public TransactionStatement(List<NamedSelect> assignments,
                                 NamedSelect returningSelect,
@@ -267,300 +245,61 @@ public class TransactionStatement implements CQLStatement.CompositeCQLStatement,
         return resultMetadata;
     }
 
-    TxnNamedRead createNamedRead(NamedSelect namedSelect, QueryOptions options, TableMetadatasAndKeys.KeyCollector keyCollector)
+    private Map<TableId, TableMetadata> collectTableMetadata()
     {
-        SelectStatement select = namedSelect.select;
-        // We reject reads from both LET and SELECT that do not specify a single row.
-        @SuppressWarnings("unchecked")
-        SinglePartitionReadQuery.Group<SinglePartitionReadCommand> selectQuery = (SinglePartitionReadQuery.Group<SinglePartitionReadCommand>) select.getQuery(options, 0);
-
-        if (selectQuery.queries.size() != 1)
-            throw invalidRequest("Within a transaction, SELECT statements must select a single partition; found " + selectQuery.queries.size() + " partitions");
-
-        SinglePartitionReadCommand command = Iterables.getOnlyElement(selectQuery.queries);
-        return new TxnNamedRead(namedSelect.name, keyCollector.collect(command.metadata(), command.partitionKey()), command, keyCollector.tables);
-    }
-
-    List<TxnNamedRead> createNamedReads(NamedSelect namedSelect, QueryOptions options, TableMetadatasAndKeys.KeyCollector keyCollector)
-    {
-        SelectStatement select = namedSelect.select;
-        // We reject reads from both LET and SELECT that do not specify a single row.
-        @SuppressWarnings("unchecked")
-        SinglePartitionReadQuery.Group<SinglePartitionReadCommand> selectQuery = (SinglePartitionReadQuery.Group<SinglePartitionReadCommand>) select.getQuery(options, 0);
-
-        if (selectQuery.queries.size() == 1)
-            return Collections.singletonList(new TxnNamedRead(namedSelect.name, keyCollector.collect(select.table, selectQuery.queries.get(0).partitionKey()), selectQuery.queries.get(0), keyCollector.tables));
-
-        List<TxnNamedRead> list = new ArrayList<>(selectQuery.queries.size());
-        for (int i = 0; i < selectQuery.queries.size(); i++)
-        {
-            SinglePartitionReadCommand readCommand = selectQuery.queries.get(i);
-            list.add(new TxnNamedRead(txnDataName(RETURNING, i), keyCollector.collect(readCommand.metadata(), readCommand.partitionKey()), readCommand, keyCollector.tables));
-        }
-        return list;
-    }
-
-    private List<TxnNamedRead> createNamedReads(QueryOptions options, @Nullable Int2ObjectHashMap<NamedSelect> autoReads, TableMetadatasAndKeys.KeyCollector keyCollector)
-    {
-        List<TxnNamedRead> reads = new ArrayList<>(assignments.size() + 1);
-
-        for (NamedSelect select : assignments)
-        {
-            TxnNamedRead read = createNamedRead(select, options, keyCollector);
-            minEpoch = Math.max(minEpoch, select.select.table.epoch.getEpoch());
-            reads.add(read);
-        }
-
-        if (returningSelect != null)
-        {
-            for (TxnNamedRead read : createNamedReads(returningSelect, options, keyCollector))
-            {
-                minEpoch = Math.max(minEpoch, returningSelect.select.table.epoch.getEpoch());
-                reads.add(read);
-            }
-        }
-
-        if (autoReads != null)
-        {
-            for (NamedSelect select : autoReads.values())
-            {
-                TxnNamedRead read = createNamedRead(select, options, keyCollector);
-                reads.add(read);
-            }
-        }
-
-        return reads;
-    }
-
-    TxnCondition createCondition(QueryOptions options)
-    {
-        if (conditions.isEmpty())
-            return TxnCondition.none();
-        if (conditions.size() == 1)
-            return conditions.get(0).createCondition(options);
-
-        List<TxnCondition> result = new ArrayList<>(conditions.size());
-        for (ConditionStatement condition : conditions)
-            result.add(condition.createCondition(options));
-
-        // TODO: OR support
-        return new TxnCondition.BooleanGroup(TxnCondition.Kind.AND, result);
-    }
-
-    TableMetadatas.Complete collectTables()
-    {
-        TableMetadatas.Collector collector = new TableMetadatas.Collector();
+        Map<TableId, TableMetadata> tables = new LinkedHashMap<>();
         if (updates != null)
         {
             for (ModificationStatement modification : updates)
-                collector.add(modification.metadata);
+                tables.put(modification.metadata.id, modification.metadata);
         }
         if (assignments != null)
         {
             for (NamedSelect select : assignments)
-                collector.add(select.select.table);
+                tables.put(select.select.table.id, select.select.table);
         }
         if (returningSelect != null)
-        {
-            collector.add(returningSelect.select.table);
-        }
+            tables.put(returningSelect.select.table.id, returningSelect.select.table);
         if (returningReferences != null)
         {
             for (RowDataReference ref : returningReferences)
-                collector.add(ref.table());
+                if (ref.table() != null)
+                    tables.put(ref.table().id, ref.table());
         }
-        return collector.build();
-    }
-    
-    private Keys toKeys(SortedSet<Key> keySet)
-    {
-        return new Keys(keySet);
+        return tables;
     }
 
-    List<TxnWrite.Fragment> createWriteFragments(ClientState state, QueryOptions options, Map<Integer, NamedSelect> autoReads, TableMetadatasAndKeys.KeyCollector keyCollector)
+    /**
+     * Returns all tables referenced by this transaction, including tables read by LET assignments,
+     * returned SELECTs, and returned references.
+     */
+    public Set<TableId> referencedTableIds()
     {
-        // check that within a transaction we don't have multiple updates to the same primary key, column pair
-        HashMap<Object, Columns> seenColumns = new HashMap<>();
+        return Collections.unmodifiableSet(new HashSet<>(collectTableMetadata().keySet()));
+    }
 
-        List<TxnWrite.Fragment> fragments = new ArrayList<>(updates.size());
-        int idx = 0;
-        for (ModificationStatement modification : updates)
+    /**
+     * Returns the capabilities required by this transaction for provider admission.
+     *
+     * Writes conservatively require READ as Accord may generate reads while compiling a mutation.
+     */
+    public Set<TransactionProvider.Capability> requiredCapabilities()
+    {
+        Set<TransactionProvider.Capability> required = EnumSet.of(TransactionProvider.Capability.STRICT_SERIALIZABLE);
+
+        if (!updates.isEmpty())
         {
-            minEpoch = Math.max(minEpoch, modification.metadata().epoch.getEpoch());
-            List<TxnWrite.Fragment> writeFragments = modification.getTxnWriteFragment(idx, state, options, keyCollector);
-            fragments.addAll(writeFragments);
-            validateOnlyModifyPrimaryKeyColumnPairOnce(seenColumns, modification, writeFragments);
-
-            if (modification.allReferenceOperations().stream().anyMatch(ReferenceOperation::requiresRead))
-            {
-                // Reads are not merged by partition here due to potentially differing columns retrieved, etc.
-                int partitionName = txnDataName(AUTO_READ, idx);
-                if (!autoReads.containsKey(partitionName))
-                    autoReads.put(partitionName, new NamedSelect(partitionName, modification.createSelectForTxn()));
-            }
-
-            idx++;
+            required.add(TransactionProvider.Capability.WRITE);
+            required.add(TransactionProvider.Capability.READ);
         }
-        return fragments;
-    }
+        if (!assignments.isEmpty() || returningSelect != null || (returningReferences != null && !returningReferences.isEmpty()))
+            required.add(TransactionProvider.Capability.READ);
+        if (!conditions.isEmpty())
+            required.add(TransactionProvider.Capability.CONDITIONAL);
+        if (referencedTableIds().size() > 1)
+            required.add(TransactionProvider.Capability.MULTI_TABLE);
 
-    private static void validateOnlyModifyPrimaryKeyColumnPairOnce(HashMap<Object, Columns> seenColumns,
-                                                                   ModificationStatement statement, List<TxnWrite.Fragment> writeFragments)
-    {
-        Columns regularColumns = statement.updatedColumns().columns(false);
-        statement.forEachRowKey(writeFragments, seenColumns, regularColumns, TransactionStatement::mergeColumnsIfNoDuplicates);
-        Columns staticColumns = statement.updatedColumns().columns(true);
-        statement.forEachPartitionKey(writeFragments, seenColumns, staticColumns, TransactionStatement::mergeColumnsIfNoDuplicates);
-    }
-
-    private static Columns mergeColumnsIfNoDuplicates(Columns existing, Columns add)
-    {
-        Columns merged = existing.mergeTo(add);
-        if (merged.size() != existing.size() + add.size())
-            throw invalidRequest(DUPLICATE_KEYS_IN_SAME_TRANSACTION_MESSAGE);
-        return merged;
-    }
-
-    private ConsistencyLevel consistencyLevelForAccordRead(ClusterMetadata cm, TableMetadatas.Complete tables, Keys keys, @Nullable ConsistencyLevel consistencyLevel)
-    {
-        // Write transactions are read/write so it creates a read and ends up needing a consistency level
-        // which is fine to leave null
-        if (keys.isEmpty())
-            return null;
-
-        // Null means no specific consistency behavior is required from Accord, it's functionally similar to
-        // reading at ONE if you are reading data that wasn't written via Accord
-        if (consistencyLevel == null)
-            return null;
-
-        for (Key key : keys)
-        {
-            // readCLForMode should return either null or the supplied consistency level
-            // in which case we will read everything at that CL since Accord doesn't support per table
-            // read consistency
-            ConsistencyLevel readCL = consistencyLevelForAccordRead(cm, tables, key, consistencyLevel);
-            if (readCL != null)
-                return readCL;
-        }
-        return null;
-    }
-
-    private ConsistencyLevel consistencyLevelForAccordRead(ClusterMetadata cm, TableMetadatas.Complete tables, Key key, ConsistencyLevel consistencyLevel)
-    {
-        // Null means no specific consistency behavior is required from Accord, it's functionally similar to
-        // reading at ONE if you are reading data that wasn't written via Accord
-        if (consistencyLevel == null)
-            return null;
-
-        PartitionKey pk = (PartitionKey)key;
-        TableId tableId = pk.table();
-        Token token = pk.token();
-        TableParams tableParams = tables.getMetadata(tableId).params;
-        TransactionalMode mode = tableParams.transactionalMode;
-        TransactionalMigrationFromMode migrationFromMode = tableParams.transactionalMigrationFrom;
-        return mode.readCLForMode(migrationFromMode, consistencyLevel, cm, tableId, token);
-    }
-
-    private static ConsistencyLevel consistencyLevelForAccordCommit(ClusterMetadata cm, TableMetadatas.Complete tables, TableMetadatasAndKeys.KeyCollector keys, @Nullable ConsistencyLevel consistencyLevel)
-    {
-        checkArgument(!keys.isEmpty(), "keys should not be empty");
-        // Null means no specific consistency behavior is required from Accord, it's functionally similar to ANY
-        // if you aren't reading the result back via Accord
-        if (consistencyLevel == null)
-            return null;
-
-        for (Key key : keys)
-        {
-            // commitCLForMode should return either null or the supplied consistency level
-            // in which case we will commit everything at that CL since Accord doesn't support per table
-            // commit consistency
-            ConsistencyLevel commitCL = consistencyLevelForAccordCommit(cm, tables, key, consistencyLevel);
-            if (commitCL != null)
-                return commitCL;
-        }
-        return null;
-    }
-
-    private static ConsistencyLevel consistencyLevelForAccordCommit(ClusterMetadata cm, TableMetadatas.Complete tables, Key key, @Nullable ConsistencyLevel consistencyLevel)
-    {
-        // Null means no specific consistency behavior is required from Accord, it's functionally similar to ANY
-        // if you aren't reading the result back via Accord
-        if (consistencyLevel == null)
-            return null;
-
-        PartitionKey pk = (PartitionKey)key;
-        TableId tableId = pk.table();
-        Token token = pk.token();
-        TableParams tableParams = tables.getMetadata(tableId).params;
-        TransactionalMode mode = tableParams.transactionalMode;
-        TransactionalMigrationFromMode migrationFromMode = tableParams.transactionalMigrationFrom;
-        // commitCLForMode should return either null or the supplied consistency level
-        // in which case we will commit everything at that CL since Accord doesn't support per table
-        // commit consistency
-        return mode.commitCLForMode(migrationFromMode, consistencyLevel, cm, tableId, token);
-    }
-
-    @VisibleForTesting
-    @Nullable
-    public Txn createTxn(ClientState state, QueryOptions options)
-    {
-        ClusterMetadata cm = ClusterMetadata.current();
-        TableMetadatas.Complete tables = collectTables();
-        TableMetadatasAndKeys.KeyCollector keyCollector = new TableMetadatasAndKeys.KeyCollector(tables);
-
-        if (updates.isEmpty())
-        {
-            // TODO: Test case around this...
-            Preconditions.checkState(conditions.isEmpty(), "No condition should exist without updates present");
-            List<TxnNamedRead> reads = createNamedReads(options, null, keyCollector);
-            Keys keys = keyCollector.build();
-            TxnRead read = createTxnRead(tables, reads, consistencyLevelForAccordRead(cm, tables, keys, options.getSerialConsistency()), Domain.Key);
-            Txn.Kind kind = shouldReadEphemerally(keys, tables.getMetadata((TableId)keys.get(0).prefix()).params, Read);
-            return new Txn.InMemory(kind, keys, read, TxnQuery.ALL, null, new TableMetadatasAndKeys(tables, keys));
-        }
-        else
-        {
-            Int2ObjectHashMap<NamedSelect> autoReads = new Int2ObjectHashMap<>();
-            List<TxnWrite.Fragment> writeFragments = createWriteFragments(state, options, autoReads, keyCollector);
-            List<TxnNamedRead> reads = createNamedReads(options, autoReads, keyCollector);
-            if (writeFragments.isEmpty()) // ModificationStatement yield no Mutation (DELETE WHERE pk=0 AND c < 0 AND c > 0 -- matches no keys; so has no mutation)
-            {
-                // cleanup memory
-                keyCollector.clear();
-                autoReads.clear();
-                return maybeCreateTxnFromEmptyWrites(cm, options, tables);
-            }
-            ConsistencyLevel commitCL = consistencyLevelForAccordCommit(cm, tables, keyCollector, options.getConsistency());
-            Keys keys = keyCollector.build();
-            AccordUpdate update = new TxnUpdate(tables, writeFragments, createCondition(options), commitCL, PreserveTimestamp.no);
-            TxnRead read = createTxnRead(tables, reads, null, Domain.Key);
-            return new Txn.InMemory(keys, read, TxnQuery.ALL, update, new TableMetadatasAndKeys(tables, keys));
-        }
-    }
-
-    @Nullable
-    private Txn.InMemory maybeCreateTxnFromEmptyWrites(ClusterMetadata cm, QueryOptions options, TableMetadatas.Complete tables)
-    {
-        TableMetadatasAndKeys.KeyCollector keyCollector = new TableMetadatasAndKeys.KeyCollector(tables);
-        List<TxnNamedRead> reads = createNamedReads(options, null, keyCollector);
-        if (reads.isEmpty())
-        {
-            // no reads, this is a no-op
-            noSpamLogger.info(WRITE_TXN_EMPTY_WITH_NO_READS);
-            return null;
-        }
-        if (returningSelect == null && returningReferences == null)
-        {
-            // the reads were for the mutation, and since the mutation doesn't exist the reads are not needed
-            noSpamLogger.info(WRITE_TXN_EMPTY_WITH_IGNORED_READS);
-            return null;
-        }
-
-        // Return a read only txn
-        Keys keys = keyCollector.build();
-        TxnRead read = createTxnRead(tables, reads, consistencyLevelForAccordRead(cm, tables, keys, options.getSerialConsistency()), Domain.Key);
-        Txn.Kind kind = shouldReadEphemerally(keys, tables.getMetadata((TableId)keys.get(0).prefix()).params, Read);
-        return new Txn.InMemory(kind, keys, read, TxnQuery.ALL, null, new TableMetadatasAndKeys(tables, keys));
+        return Collections.unmodifiableSet(required);
     }
 
     /**
@@ -586,7 +325,10 @@ public class TransactionStatement implements CQLStatement.CompositeCQLStatement,
     @Override
     public ResultMessage execute(QueryState state, QueryOptions options, Dispatcher.RequestTime requestTime)
     {
-        checkTrue(DatabaseDescriptor.getAccordTransactionsEnabled(), TRANSACTIONS_DISABLED_MESSAGE);
+        Set<TableId> tableIds = referencedTableIds();
+        TransactionDomainGuard.checkTransactionTables(tableIds, "TRANSACTION");
+        if (!TransactionDomainGuard.hasActiveExternal(tableIds))
+            checkTrue(DatabaseDescriptor.getAccordTransactionsEnabled(), TRANSACTIONS_DISABLED_MESSAGE);
 
         // check again since now we have query options; note that statements are quaranted to be single partition reads at this point
         for (NamedSelect assignment : assignments)
@@ -600,43 +342,160 @@ public class TransactionStatement implements CQLStatement.CompositeCQLStatement,
             checkTrue(returningSelect.select.getLimit(options) == DataLimits.NO_LIMIT, NO_PARTITION_IN_CLAUSE_WITH_LIMIT, "SELECT", returningSelect.select.source);
         }
 
-        Txn txn = createTxn(state.getClientState(), options);
-        if (txn == null)
-            return new ResultMessage.Void();
+        TransactionProviderRegistry.Selection selection = TransactionProviders.registry().select(tableIds, requiredCapabilities());
+        TransactionExecutionContext context = new TransactionExecutionContext(selection.domain(),
+                                                                                options.getConsistency(),
+                                                                                options.getSerialConsistency(),
+                                                                                options.getProtocolVersion(),
+                                                                                requestTime);
+        TransactionPlan plan = toPlan(state.getClientState(), options);
+        return renderOutcome(plan, selection.provider().execute(plan, context), options);
+    }
 
-        TxnResult txnResult = AccordService.instance().coordinate(minEpoch, txn, options.getConsistency(), requestTime);
-        if (txnResult.kind() == retry_new_protocol)
-            throw new InvalidRequestException(UNSUPPORTED_MIGRATION);
-        TxnValidationRejection.maybeThrow(txnResult);
-        TxnDataResult data = (TxnDataResult)txnResult;
+    public TransactionPlan toPlan(ClientState state, QueryOptions options)
+    {
+        for (NamedSelect assignment : assignments)
+            validateExternalSelection(assignment.select, options);
+        if (returningSelect != null)
+            validateExternalSelection(returningSelect.select, options);
+        Map<Integer, NamedSelect> autoReads = new LinkedHashMap<>();
+        List<TransactionPlan.Write> planWrites = new ArrayList<>();
+        Map<Object, Columns> seenColumns = new HashMap<>();
+        if (!updates.isEmpty())
+        {
+            for (int index = 0; index < updates.size(); index++)
+            {
+                ModificationStatement modification = updates.get(index);
+                List<PartitionUpdate> baseUpdates = modification.getTxnUpdate(state, options);
+                List<Clustering<?>> clusterings = modification.txnClusterings(options, state);
+                List<TransactionOperation> regularOperations = modification.getTxnRegularOperations(options);
+                List<TransactionOperation> staticOperations = modification.getTxnStaticOperations(options);
+                Columns regularColumns = modification.updatedColumns().columns(false);
+                Columns staticColumns = modification.updatedColumns().columns(true);
+                for (PartitionUpdate baseUpdate : baseUpdates)
+                {
+                    DecoratedKey key = baseUpdate.partitionKey();
+                    for (Row row : baseUpdate)
+                        seenColumns.merge(new ModificationStatement.RowKey(key, row.clustering()), regularColumns, TransactionStatement::mergeColumnsIfNoDuplicates);
+                    seenColumns.merge(key, staticColumns, TransactionStatement::mergeColumnsIfNoDuplicates);
+                    planWrites.add(new TransactionPlan.Write(index,
+                                                             baseUpdate,
+                                                             clusterings,
+                                                             regularOperations,
+                                                             staticOperations));
+                }
+                if (modification.allReferenceOperations().stream().anyMatch(ReferenceOperation::requiresRead))
+                {
+                    int slot = id(AUTO_READ, index);
+                    if (!autoReads.containsKey(slot))
+                        autoReads.put(slot, new NamedSelect(slot, modification.createSelectForTxn()));
+                }
+            }
+        }
+
+        List<TransactionPlan.Read> planReads = new ArrayList<>();
+        for (NamedSelect assignment : assignments)
+            addPlanReads(planReads, assignment, options, true);
+
+        List<Integer> returningSlots = new ArrayList<>();
+        if (returningSelect != null)
+        {
+            int firstReturningRead = planReads.size();
+            addPlanReads(planReads, returningSelect, options, false);
+            for (int i = firstReturningRead; i < planReads.size(); i++)
+                returningSlots.add(planReads.get(i).slot());
+        }
+
+        if (!planWrites.isEmpty())
+        {
+            for (NamedSelect autoRead : autoReads.values())
+                addPlanReads(planReads, autoRead, options, true);
+        }
+
+        TransactionPlan.ReturnSelection returning = TransactionPlan.ReturnSelection.none();
+        if (returningSelect != null)
+        {
+            returning = TransactionPlan.ReturnSelection.rows(returningSlots);
+        }
+        else if (returningReferences != null)
+        {
+            List<TransactionReference> references = new ArrayList<>(returningReferences.size());
+            for (RowDataReference reference : returningReferences)
+                references.add(reference.toTransactionReference(options));
+            returning = TransactionPlan.ReturnSelection.references(references);
+        }
+
+        List<TransactionCondition> planConditions = new ArrayList<>();
+        if (!planWrites.isEmpty())
+            for (ConditionStatement condition : conditions)
+                planConditions.add(condition.toTransactionCondition(options));
+
+        Map<TableId, TableMetadata> tableMap = collectTableMetadata();
+        long minEpoch = Epoch.EMPTY.getEpoch();
+        for (TableMetadata table : tableMap.values())
+            minEpoch = Math.max(minEpoch, table.epoch.getEpoch());
+
+        boolean noOp = planWrites.isEmpty() && (returning.kind() == TransactionPlan.ReturnSelection.Kind.NONE || planReads.isEmpty());
+        if (noOp)
+        {
+            noSpamLogger.info(planReads.isEmpty() ? WRITE_TXN_EMPTY_WITH_NO_READS : WRITE_TXN_EMPTY_WITH_IGNORED_READS);
+            planReads.clear();
+        }
+        return new TransactionPlan(planReads, planWrites, planConditions, tableMap, returning, minEpoch, noOp);
+    }
+
+    private static Columns mergeColumnsIfNoDuplicates(Columns existing, Columns add)
+    {
+        Columns merged = existing.mergeTo(add);
+        if (merged.size() != existing.size() + add.size())
+            throw invalidRequest(DUPLICATE_KEYS_IN_SAME_TRANSACTION_MESSAGE);
+        return merged;
+    }
+
+    private void addPlanReads(List<TransactionPlan.Read> result, NamedSelect namedSelect, QueryOptions options, boolean requireSingle)
+    {
+        @SuppressWarnings("unchecked")
+        SinglePartitionReadQuery.Group<SinglePartitionReadCommand> query =
+        (SinglePartitionReadQuery.Group<SinglePartitionReadCommand>) namedSelect.select.getQuery(options, 0);
+        if (requireSingle && query.queries.size() != 1)
+            throw invalidRequest("Within a transaction, SELECT statements must select a single partition; found " + query.queries.size() + " partitions");
+        if (query.queries.size() == 1)
+        {
+            result.add(new TransactionPlan.Read(namedSelect.name, query.queries.get(0), namedSelect.select.getSelection().getColumns()));
+            return;
+        }
+        for (int i = 0; i < query.queries.size(); i++)
+            result.add(new TransactionPlan.Read(id(RETURNING, i), query.queries.get(i), namedSelect.select.getSelection().getColumns()));
+    }
+
+    private ResultMessage renderOutcome(TransactionPlan plan, TransactionOutcome outcome, QueryOptions options)
+    {
+        if (plan.isNoOp() || outcome.isNoOp())
+            return new ResultMessage.Void();
 
         if (returningSelect != null)
         {
-            @SuppressWarnings("unchecked")
-            SinglePartitionReadQuery.Group<SinglePartitionReadCommand> selectQuery = (SinglePartitionReadQuery.Group<SinglePartitionReadCommand>) returningSelect.select.getQuery(options, 0);
+            Map<Integer, SinglePartitionReadCommand> commands = new HashMap<>();
+            for (TransactionPlan.Read read : plan.reads())
+                commands.put(read.slot(), read.command());
             Selection.Selectors selectors = returningSelect.select.getSelection().newSelectors(options);
-            long atMicros = data.atMicros;
+            long atMicros = outcome.atMicros();
             FunctionContext context = new FunctionContext.MicrosFunctionContext(atMicros)
             {
                 @Override public QueryOptions options() { return options; }
             };
             ResultSetBuilder result = new ResultSetBuilder(resultMetadata, context, selectors, false);
             long atSeconds = atMicros / 1000_000;
-            if (selectQuery.queries.size() == 1)
+            for (int slot : plan.returning().slots())
             {
-                TxnDataKeyValue partition = (TxnDataKeyValue)data.get(txnDataName(RETURNING));
-                boolean reversed = selectQuery.queries.get(0).isReversed();
+                FilteredPartition partition = outcome.partition(slot);
                 if (partition != null)
-                    returningSelect.select.processPartition(partition.rowIterator(reversed), options, result, atSeconds);
-            }
-            else
-            {
-                for (int i = 0; i < selectQuery.queries.size(); i++)
                 {
-                    TxnDataKeyValue partition = (TxnDataKeyValue)data.get(txnDataName(RETURNING, i));
-                    boolean reversed = selectQuery.queries.get(i).isReversed();
-                    if (partition != null)
-                        returningSelect.select.processPartition(partition.rowIterator(reversed), options, result, atSeconds);
+                    boolean reversed = commands.get(slot).isReversed();
+                    try (RowIterator rows = partition.rowIterator(reversed))
+                    {
+                        returningSelect.select.processPartition(rows, options, result, atSeconds);
+                    }
                 }
             }
             return new ResultMessage.Rows(result.build());
@@ -646,7 +505,6 @@ public class TransactionStatement implements CQLStatement.CompositeCQLStatement,
         {
             List<AbstractType<?>> resultType = new ArrayList<>(returningReferences.size());
             List<ColumnMetadata> columns = new ArrayList<>(returningReferences.size());
-
             for (RowDataReference reference : returningReferences)
             {
                 ColumnMetadata forMetadata = reference.toResultMetadata();
@@ -656,20 +514,12 @@ public class TransactionStatement implements CQLStatement.CompositeCQLStatement,
 
             ResultSetBuilder result = new ResultSetBuilder(resultMetadata, FunctionContext.NONE, Selection.noopSelector(), false);
             result.newRow(options.getProtocolVersion(), null, null, columns);
-
-            for (int i = 0; i < returningReferences.size(); i++)
-            {
-                RowDataReference reference = returningReferences.get(i);
-                TxnReference txnReference = reference.toTxnReference(options);
-                ByteBuffer buffer = txnReference.asColumn().toByteBuffer(data, resultType.get(i));
-                result.add(buffer);
-            }
-
+            List<TransactionReference> references = plan.returning().references();
+            for (int i = 0; i < references.size(); i++)
+                result.add(references.get(i).toByteBuffer(outcome.partition(references.get(i).slot()), resultType.get(i)));
             return new ResultMessage.Rows(result.build());
         }
 
-        // In the case of a write-only transaction, just return and empty result.
-        // TODO: This could be modified to return an indication of whether a condition (if present) succeeds.
         return new ResultMessage.Void();
     }
 
@@ -700,9 +550,21 @@ public class TransactionStatement implements CQLStatement.CompositeCQLStatement,
             throw invalidRequest(NO_GROUP_BY_IN_TXNS_MESSAGE, "SELECT", select.source);
     }
 
+    private static void validateExternalSelection(SelectStatement select, QueryOptions options)
+    {
+        if (TransactionDomainGuard.isActiveExternal(select.table))
+        {
+            // The experimental scalar profile stores values, without Cassandra cell metadata.
+            org.apache.cassandra.cql3.selection.Selection.Selectors selectors = select.getSelection().newSelectors(options);
+            checkFalse(selectors.hasProcessing() || selectors.collectWritetimes() || selectors.collectTTLs(),
+                       "External scalar transactions support only direct column selections");
+        }
+    }
+
     private static void validate(SelectStatement prepared)
     {
-        if (!prepared.table.isAccordEnabled())
+        TransactionDomainGuard.checkTransaction(prepared.table, "TRANSACTION");
+        if (!TransactionDomainGuard.isActiveExternal(prepared.table) && !prepared.table.isAccordEnabled())
             throw invalidRequest(TRANSACTIONS_DISABLED_ON_TABLE_MESSAGE, "SELECT", prepared.source);
         if (prepared.table.params.pendingDrop)
             throw invalidRequest(TRANSACTIONS_DISABLED_ON_TABLE_BEING_DROPPED_MESSAGE, "SELECT", prepared.source);
@@ -767,7 +629,7 @@ public class TransactionStatement implements CQLStatement.CompositeCQLStatement,
             for (SelectStatement.RawStatement select : assignments)
             {
                 checkNotNull(select.parameters.refName, "Assignments must be named");
-                int name = txnDataName(USER, userReadIndex++);
+                int name = id(USER, userReadIndex++);
                 nameToTxnDataName.put(select.parameters.refName, name);
                 checkTrue(selectNames.add(select.parameters.refName), DUPLICATE_TUPLE_NAME_MESSAGE, select.parameters.refName);
                 validate(select);
@@ -791,7 +653,7 @@ public class TransactionStatement implements CQLStatement.CompositeCQLStatement,
                 validate(select);
                 SelectStatement prepared = select.prepare(bindVariables);
                 validate(prepared);
-                returningSelect = new NamedSelect(txnDataName(RETURNING), prepared);
+                returningSelect = new NamedSelect(id(RETURNING), prepared);
                 checkAtMostOnePartitionSpecified(returningSelect.select, "returning select");
             }
 
@@ -813,7 +675,9 @@ public class TransactionStatement implements CQLStatement.CompositeCQLStatement,
                 ModificationStatement.Parsed parsed = updates.get(i);
 
                 ModificationStatement prepared = parsed.prepare(state, bindVariables);
-                checkTrue(prepared.metadata().isAccordEnabled(), TRANSACTIONS_DISABLED_ON_TABLE_MESSAGE, prepared.type, prepared.source);
+                TransactionDomainGuard.checkTransaction(prepared.metadata(), "TRANSACTION");
+                checkTrue(TransactionDomainGuard.isActiveExternal(prepared.metadata()) || prepared.metadata().isAccordEnabled(),
+                          TRANSACTIONS_DISABLED_ON_TABLE_MESSAGE, prepared.type, prepared.source);
                 checkFalse(prepared.metadata().params.pendingDrop, TRANSACTIONS_DISABLED_ON_TABLE_BEING_DROPPED_MESSAGE, prepared.type, prepared.source);
                 checkFalse(prepared.hasConditions(), NO_CONDITIONS_IN_UPDATES_MESSAGE, prepared.type, prepared.source);
                 checkFalse(prepared.isTimestampSet(), NO_TIMESTAMPS_IN_UPDATES_MESSAGE, prepared.type, prepared.source);

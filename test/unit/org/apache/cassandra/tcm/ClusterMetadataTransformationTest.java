@@ -360,6 +360,8 @@ public class ClusterMetadataTransformationTest
             return metadata.accordFastPath;
         else if (key == CONSENSUS_MIGRATION_STATE)
             return metadata.consensusMigrationState;
+        else if (key == MetadataKeys.CONSISTENCY_DOMAINS)
+            return metadata.consistencyDomains;
         else if (key == ACCORD_STALE_REPLICAS)
             return metadata.accordStaleReplicas;
         else if (key == CMS_MEMBERSHIP)

@@ -63,6 +63,8 @@ public class Unregister implements Transformation
     @Override
     public Result execute(ClusterMetadata prev)
     {
+        if (!prev.consistencyDomains.isEmpty())
+            return new Rejected(INVALID, "Can not unregister a node while transaction domains are reserved");
         if (!prev.directory.peerIds().contains(nodeId))
             return new Rejected(INVALID, String.format("Can not unregister %s since it is not present in the directory.", nodeId));
 

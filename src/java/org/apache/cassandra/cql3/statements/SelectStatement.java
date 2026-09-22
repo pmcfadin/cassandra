@@ -127,6 +127,7 @@ import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageProxy;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.service.pager.AggregationQueryPager;
 import org.apache.cassandra.service.pager.PagingState;
 import org.apache.cassandra.service.pager.QueryPager;
@@ -368,6 +369,7 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement,
     @Override
     public ResultMessage.Rows execute(QueryState state, QueryOptions options, Dispatcher.RequestTime requestTime)
     {
+        TransactionDomainGuard.check(table, "SELECT");
         ConsistencyLevel cl = options.getConsistency();
         checkNotNull(cl, "Invalid empty consistency level");
 
@@ -680,6 +682,7 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement,
                                               long nowInSec,
                                               Dispatcher.RequestTime requestTime)
     {
+        TransactionDomainGuard.check(table, "internal SELECT");
         int userLimit = getLimit(options);
         int userPerPartitionLimit = getPerPartitionLimit(options);
         int pageSize = options.getPageSize();
@@ -734,6 +737,7 @@ public class SelectStatement implements CQLStatement.SingleKeyspaceCqlStatement,
 
     public Map<DecoratedKey, List<Row>> executeRawInternal(QueryOptions options, ClientState state, long nowInSec) throws RequestExecutionException, RequestValidationException
     {
+        TransactionDomainGuard.check(table, "internal SELECT");
         int userLimit = getLimit(options);
         int userPerPartitionLimit = getPerPartitionLimit(options);
         if (options.getPageSize() > 0)

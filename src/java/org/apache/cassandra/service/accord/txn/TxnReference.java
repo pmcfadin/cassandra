@@ -45,7 +45,6 @@ import org.apache.cassandra.db.rows.AbstractCell;
 import org.apache.cassandra.db.rows.Cell;
 import org.apache.cassandra.db.rows.CellPath;
 import org.apache.cassandra.db.rows.ColumnData;
-import org.apache.cassandra.db.rows.ComplexColumnData;
 import org.apache.cassandra.db.rows.Row;
 import org.apache.cassandra.io.ParameterisedUnversionedSerializer;
 import org.apache.cassandra.io.UnversionedSerializer;
@@ -54,10 +53,10 @@ import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.accord.serializers.TableMetadatas;
+import org.apache.cassandra.service.consensus.txn.TransactionReference;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.ObjectSizes;
 
-import static org.apache.cassandra.db.marshal.CollectionType.Kind.SET;
 import static org.apache.cassandra.service.accord.serializers.AccordSerializers.columnMetadataSerializer;
 
 public abstract class TxnReference
@@ -421,65 +420,7 @@ public abstract class TxnReference
 
         public ByteBuffer toByteBuffer(TxnData data, AbstractType<?> receiver)
         {
-            // TODO: confirm all references can be satisfied as part of the txn condition
-            AbstractType<?> type = column().type;
-
-            // Modify the type we'll check if the reference is to a collection element.
-            if (selectsPath())
-            {
-                if (type.isCollection())
-                {
-                    CollectionType<?> collectionType = (CollectionType<?>) type;
-                    type = collectionType.kind == SET ? collectionType.nameComparator() : collectionType.valueComparator();
-                }
-                else if (type.isUDT())
-                    type = getFieldSelectionType();
-            }
-
-            // Account for frozen collection and reversed clustering key references:
-            AbstractType<?> receiveType = type.isFrozenCollection() ? receiver.freeze().unwrap() : receiver.unwrap();
-            if (!(receiveType == type.unwrap()))
-                throw new IllegalArgumentException("Receiving type " + receiveType + " does not match " + type.unwrap());
-
-            if (column().isPartitionKey())
-                return getPartitionKey(data);
-            else if (column().isClusteringColumn())
-                return getClusteringKey(data);
-
-            ColumnData columnData = getColumnData(data);
-
-            if (columnData == null)
-                return null;
-
-            if (selectsComplex())
-            {
-                ComplexColumnData complex = (ComplexColumnData) columnData;
-
-                if (type instanceof CollectionType)
-                {
-                    CollectionType<?> col = (CollectionType<?>) type;
-                    return col.serializeForNativeProtocol(complex.iterator());
-                }
-                else if (type instanceof UserType)
-                {
-                    UserType udt = (UserType) type;
-                    return udt.serializeForNativeProtocol(complex.iterator());
-                }
-
-                throw new UnsupportedOperationException("Unsupported complex type: " + type);
-            }
-            else if (selectsFrozenCollectionElement())
-            {
-                // If a path is selected for a non-frozen collection, the element will already be materialized.
-                return getFrozenCollectionElement((Cell<?>) columnData);
-            }
-            else if (selectsFrozenUDTField())
-            {
-                return getFrozenFieldValue((Cell<?>) columnData);
-            }
-
-            Cell<?> cell = (Cell<?>) columnData;
-            return selectsSetElement() ? cell.path().get(0) : cell.buffer();
+            return new TransactionReference(tuple, table, column, path).toByteBuffer(getPartition(data), receiver);
         }
 
         private boolean selectsComplex()

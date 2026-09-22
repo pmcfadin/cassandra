@@ -38,6 +38,7 @@ import org.apache.cassandra.net.Message;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tcm.ClusterMetadataService;
 import org.apache.cassandra.tcm.Epoch;
@@ -67,6 +68,9 @@ public class ReadCommandVerbHandler implements IVerbHandler<ReadCommand>
 
     public void doVerb(Message<ReadCommand> message)
     {
+        // Do this before token/schema admission and before opening a read controller.
+        TransactionDomainGuard.check(message.payload.metadata(), "read message arrival");
+
         if (message.epoch().isAfter(Epoch.EMPTY))
         {
             ClusterMetadata metadata = ClusterMetadata.current();

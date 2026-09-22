@@ -52,6 +52,7 @@ import org.apache.cassandra.metrics.HintedHandoffMetrics;
 import org.apache.cassandra.metrics.StorageMetrics;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.utils.MBeanWrapper;
 import org.apache.cassandra.utils.TimeUUID;
 import org.apache.cassandra.utils.concurrent.Future;
@@ -186,6 +187,10 @@ public final class HintsService implements HintsServiceMBean
      */
     public void write(Collection<UUID> hostIds, Hint hint)
     {
+        // Validate the complete mutation before initializing a store or
+        // appending the hint to its buffer.  This also covers hints produced
+        // by batchlog replay and re-handoff.
+        TransactionDomainGuard.check(hint.mutation, "hint journaling");
         if (isShutDown)
             throw new IllegalStateException("HintsService is shut down and can't accept new hints");
 
@@ -213,6 +218,7 @@ public final class HintsService implements HintsServiceMBean
      */
     void writeForAllReplicas(Hint hint)
     {
+        TransactionDomainGuard.check(hint.mutation, "hint re-handoff");
         String keyspaceName = hint.mutation.getKeyspaceName();
         Token token = hint.mutation.key().getToken();
 

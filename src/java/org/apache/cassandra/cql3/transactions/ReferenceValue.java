@@ -26,12 +26,15 @@ import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.service.accord.txn.TxnReferenceValue;
+import org.apache.cassandra.service.consensus.txn.TransactionValue;
 
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkTrue;
 
 public abstract class ReferenceValue
 {
     public abstract TxnReferenceValue bindAndGet(FunctionContext context);
+
+    public abstract TransactionValue toTransactionValue(FunctionContext context);
 
     public static abstract class Raw extends Term.Raw
     {
@@ -51,6 +54,12 @@ public abstract class ReferenceValue
         public TxnReferenceValue bindAndGet(FunctionContext context)
         {
             return new TxnReferenceValue.Constant(term.bindAndGet(context));
+        }
+
+        @Override
+        public TransactionValue toTransactionValue(FunctionContext context)
+        {
+            return TransactionValue.literal(term.bindAndGet(context));
         }
 
         public static class Raw extends ReferenceValue.Raw
@@ -107,6 +116,12 @@ public abstract class ReferenceValue
         public TxnReferenceValue bindAndGet(FunctionContext context)
         {
             return new TxnReferenceValue.Substitution(reference.toTxnReference(context).asColumn());
+        }
+
+        @Override
+        public TransactionValue toTransactionValue(FunctionContext context)
+        {
+            return TransactionValue.reference(reference.toTransactionReference(context));
         }
 
         public static class Raw extends ReferenceValue.Raw

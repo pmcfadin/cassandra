@@ -163,6 +163,7 @@ import org.apache.cassandra.service.consensus.migration.ConsensusRequestRouter;
 import org.apache.cassandra.service.consensus.migration.ConsensusRequestRouter.ConsensusRoutingDecision;
 import org.apache.cassandra.service.consensus.migration.ConsensusRequestRouter.SplitReads;
 import org.apache.cassandra.service.consensus.migration.TransactionalMigrationFromMode;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.service.paxos.Ballot;
 import org.apache.cassandra.service.paxos.Commit;
 import org.apache.cassandra.service.paxos.ContentionStrategy;
@@ -377,6 +378,8 @@ public class StorageProxy implements StorageProxyMBean
                                   Dispatcher.RequestTime requestTime)
     throws UnavailableException, IsBootstrappingException, RequestFailureException, RequestTimeoutException, InvalidRequestException, CasWriteUnknownResultException
     {
+        TableMetadata tableMetadata = Schema.instance.validateTable(keyspaceName, cfName);
+        TransactionDomainGuard.check(tableMetadata, "CAS");
         if (DatabaseDescriptor.getPartitionDenylistEnabled() && DatabaseDescriptor.getDenylistWritesEnabled() && !partitionDenylist.isKeyPermitted(keyspaceName, cfName, key.getKey()))
         {
             denylistMetrics.incrementWritesRejected();
@@ -1231,6 +1234,12 @@ public class StorageProxy implements StorageProxyMBean
                                           PreserveTimestamp preserveTimestamps)
     throws WriteTimeoutException, WriteFailureException, UnavailableException, OverloadedException, InvalidRequestException
     {
+        String operation = mutateAtomically ? "BATCH" : "WRITE";
+        for (IMutation mutation : mutations)
+            if (mutation instanceof Mutation)
+                TransactionDomainGuard.check((Mutation) mutation, operation);
+            else
+                TransactionDomainGuard.checkTables(mutation.getTableIds(), operation);
         if (DatabaseDescriptor.getPartitionDenylistEnabled() && DatabaseDescriptor.getDenylistWritesEnabled())
         {
             for (final IMutation mutation : mutations)
@@ -2176,6 +2185,7 @@ public class StorageProxy implements StorageProxyMBean
     public static PartitionIterator read(SinglePartitionReadCommand.Group group, ConsistencyLevel consistencyLevel, Dispatcher.RequestTime requestTime)
     throws UnavailableException, IsBootstrappingException, ReadFailureException, ReadTimeoutException, InvalidRequestException
     {
+        TransactionDomainGuard.check(group.metadata(), "SELECT");
         if (DatabaseDescriptor.getPartitionDenylistEnabled() && DatabaseDescriptor.getDenylistReadsEnabled())
         {
             for (SinglePartitionReadCommand command : group.queries)
@@ -3068,6 +3078,9 @@ public class StorageProxy implements StorageProxyMBean
      */
     public static void truncateBlocking(String keyspace, String cfname) throws UnavailableException, TimeoutException
     {
+        TableMetadata table = Schema.instance.getTableMetadata(keyspace, cfname);
+        if (table != null)
+            TransactionDomainGuard.check(table, "TRUNCATE");
         logger.debug("Starting a blocking truncate operation on keyspace {}, CF {}", keyspace, cfname);
         if (isAnyStorageHostDown())
         {

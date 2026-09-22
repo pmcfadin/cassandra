@@ -26,6 +26,7 @@ import org.apache.cassandra.cql3.VariableSpecifications;
 import org.apache.cassandra.cql3.terms.Term;
 import org.apache.cassandra.service.accord.txn.TxnCondition;
 import org.apache.cassandra.service.accord.txn.TxnReference;
+import org.apache.cassandra.service.consensus.txn.TransactionCondition;
 
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkTrue;
 
@@ -153,5 +154,46 @@ public class ConditionStatement
             default:
                 throw new IllegalStateException();
         }
+    }
+
+    public TransactionCondition toTransactionCondition(QueryOptions options)
+    {
+        TransactionCondition.Kind transactionKind;
+        switch (kind)
+        {
+            case IS_NOT_NULL:
+                transactionKind = TransactionCondition.Kind.IS_NOT_NULL;
+                break;
+            case IS_NULL:
+                transactionKind = TransactionCondition.Kind.IS_NULL;
+                break;
+            case EQ:
+                transactionKind = TransactionCondition.Kind.EQUAL;
+                break;
+            case NEQ:
+                transactionKind = TransactionCondition.Kind.NOT_EQUAL;
+                break;
+            case GT:
+                transactionKind = TransactionCondition.Kind.GREATER_THAN;
+                break;
+            case GTE:
+                transactionKind = TransactionCondition.Kind.GREATER_THAN_OR_EQUAL;
+                break;
+            case LT:
+                transactionKind = TransactionCondition.Kind.LESS_THAN;
+                break;
+            case LTE:
+                transactionKind = TransactionCondition.Kind.LESS_THAN_OR_EQUAL;
+                break;
+            default:
+                throw new IllegalStateException();
+        }
+
+        if (reversed)
+            transactionKind = TransactionCondition.reverse(transactionKind);
+
+        return new TransactionCondition(transactionKind,
+                                        reference.toTransactionReference(options),
+                                        value == null ? null : value.bindAndGet(options));
     }
 }

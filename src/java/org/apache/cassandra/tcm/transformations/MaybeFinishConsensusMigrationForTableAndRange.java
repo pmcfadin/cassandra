@@ -43,6 +43,7 @@ import org.apache.cassandra.service.consensus.migration.ConsensusMigrationState;
 import org.apache.cassandra.service.consensus.migration.ConsensusTableMigration;
 import org.apache.cassandra.service.consensus.migration.TableMigrationState;
 import org.apache.cassandra.service.consensus.migration.TransactionalMigrationFromMode;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tcm.ClusterMetadata.Transformer;
 import org.apache.cassandra.tcm.Epoch;
@@ -141,6 +142,8 @@ public class MaybeFinishConsensusMigrationForTableAndRange implements Transforma
         TableMetadata tbm = metadata.schema.getTableMetadata(keyspace, cf);
         if (tbm == null)
             return new Rejected(INVALID, format("Table %s is not currently performing consensus migration", ksAndCF));
+        if (metadata.consistencyDomains.forTable(tbm.id) != null || TransactionDomainGuard.isReserved(tbm))
+            return new Rejected(INVALID, "Transaction domain is PREPARED (closed); consensus migration is not admitted");
 
         ConsensusMigrationState consensusMigrationState = metadata.consensusMigrationState;
         TableMigrationState tms = consensusMigrationState.tableStates.get(tbm.id);

@@ -58,6 +58,7 @@ import org.apache.cassandra.service.accord.IAccordService.IAccordResult;
 import org.apache.cassandra.service.accord.txn.TxnResult;
 import org.apache.cassandra.service.consensus.migration.ConsensusMigrationMutationHelper;
 import org.apache.cassandra.service.consensus.migration.ConsensusMigrationMutationHelper.SplitMutation;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tcm.ownership.DataPlacement;
 import org.apache.cassandra.tcm.ownership.VersionedEndpoints;
@@ -208,7 +209,12 @@ final class HintsDispatcher implements AutoCloseable
          * the same retry on different system error.
          */
         boolean isBatchLogHints = hostId.equals(RETRY_ON_DIFFERENT_SYSTEM_UUID);
-        boolean sendEncodedHints = reader.descriptor().messagingVersion() == messagingVersion && !isBatchLogHints && hintsFilter == null;
+        // The encoded path cannot inspect table ownership before sending. Once
+        // any domain is reserved, decode every hint so the mutation guard can
+        // reject the reserved subset while retaining ordinary hints' behavior.
+        boolean domainsReserved = TransactionDomainGuard.hasReservations();
+        boolean sendEncodedHints = reader.descriptor().messagingVersion() == messagingVersion
+                                    && !isBatchLogHints && hintsFilter == null && !domainsReserved;
         // If the hints filter is set then splitting the hints is needed and encoded hints can't do that
         checkState(!sendEncodedHints || hintsFilter == null, "Should not send encoded hints if hints filter is set");
         Action action = sendEncodedHints
@@ -290,6 +296,7 @@ final class HintsDispatcher implements AutoCloseable
                     public void run()
                     {
                         approxStartTimeNanos = MonotonicClock.Global.approxTime.now();
+                        TransactionDomainGuard.check(mutation, "hint local replay");
                         mutation.apply();
                     }
 
@@ -350,6 +357,7 @@ final class HintsDispatcher implements AutoCloseable
 
     private Callback sendHint(Hint hint)
     {
+        TransactionDomainGuard.check(hint.mutation, "hint dispatch");
         ClusterMetadata cm = ClusterMetadata.current();
         SplitHint splitHint = splitHintIntoAccordAndNormal(cm, hint);
         Mutation accordHintMutation = splitHint.accordMutation;

@@ -48,6 +48,7 @@ import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.accord.txn.TxnReference;
+import org.apache.cassandra.service.consensus.txn.TransactionReference;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkNotNull;
@@ -188,6 +189,13 @@ public class RowDataReference extends Term.NonTerminal
         Preconditions.checkState(fieldPath == null || column.isComplex() || column.type.isUDT());
 
         return TxnReference.columnOrRow(txnDataName, table, column, bindCellPath(context));
+    }
+
+    public TransactionReference toTransactionReference(FunctionContext context)
+    {
+        Preconditions.checkState(elementPath == null || column.isComplex() || column.type.isFrozenCollection());
+        Preconditions.checkState(fieldPath == null || column.isComplex() || column.type.isUDT());
+        return new TransactionReference(txnDataName, table, column, bindCellPath(context));
     }
 
     public ColumnIdentifier getFullyQualifiedName()

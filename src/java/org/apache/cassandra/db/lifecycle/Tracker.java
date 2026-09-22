@@ -62,6 +62,7 @@ import org.apache.cassandra.notifications.SSTableRepairStatusChanged;
 import org.apache.cassandra.notifications.TableDroppedNotification;
 import org.apache.cassandra.notifications.TablePreScrubNotification;
 import org.apache.cassandra.notifications.TruncationNotification;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.Throwables;
 import org.apache.cassandra.utils.TimeUUID;
@@ -255,6 +256,8 @@ public class Tracker
 
     public void addInitialSSTablesWithoutUpdatingSize(Collection<SSTableReader> sstables)
     {
+        if (!sstables.isEmpty() && !isDummy())
+            TransactionDomainGuard.check(cfstore.metadata(), "initial SSTable publication");
         if (!isDummy())
         {
             for (SSTableReader reader : sstables)
@@ -279,6 +282,11 @@ public class Tracker
                                      boolean maybeIncrementallyBackup,
                                      boolean updateSize)
     {
+        // Empty initialization is part of opening a newly reserved table and
+        // must remain possible. Any actual SSTable publication is closed until
+        // a provider-specific publication path exists.
+        if (!sstables.isEmpty() && !isDummy())
+            TransactionDomainGuard.check(cfstore.metadata(), "SSTable lifecycle publication");
         if (!isDummy())
             setupOnline(sstables);
         apply(updateLiveSet(emptySet(), sstables, maybeGetSSTableIntervalTreeLatencyMetrics()));

@@ -34,6 +34,7 @@ import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.schema.TableId;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.utils.concurrent.Future;
 import org.apache.cassandra.utils.concurrent.ImmediateFuture;
 import org.apache.cassandra.utils.vint.VIntCoding;
@@ -98,6 +99,10 @@ public final class Hint
      */
     Future<?> applyFuture()
     {
+        // Hints are a durable replay path.  Check before truncation filtering or
+        // applying any part of a mixed mutation so a reserved table is never
+        // silently converted into a normal Cassandra write.
+        TransactionDomainGuard.check(mutation, "hint replay");
         if (isLive())
         {
             // filter out partition update for tables that have been truncated since hint's creation

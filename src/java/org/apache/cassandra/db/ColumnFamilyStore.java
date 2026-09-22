@@ -151,6 +151,7 @@ import org.apache.cassandra.schema.TableParams;
 import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.service.CacheService;
 import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.service.paxos.Ballot;
 import org.apache.cassandra.service.paxos.PaxosRepairHistory;
 import org.apache.cassandra.service.paxos.TablePaxosRepairHistory;
@@ -895,6 +896,7 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
     @Deprecated(since = "4.0")
     public void loadNewSSTables()
     {
+        TransactionDomainGuard.check(metadata(), "SSTable import");
 
         SSTableImporter.Options options = SSTableImporter.Options.options().resetLevel(true).build();
         sstableImporter.importNewSSTables(options);
@@ -905,6 +907,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
                                           boolean verifySSTables, boolean verifyTokens, boolean invalidateCaches,
                                           boolean extendedVerify, boolean copyData)
     {
+        TransactionDomainGuard.check(metadata(), "SSTable import");
+
         return sstableImporter.importNewSSTables(SSTableImporter.Options.options(srcPaths)
                                                                         .resetLevel(resetLevel)
                                                                         .clearRepaired(clearRepaired)
@@ -920,6 +924,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
                                           boolean verifySSTables, boolean verifyTokens, boolean invalidateCaches,
                                           boolean extendedVerify)
     {
+        TransactionDomainGuard.check(metadata(), "SSTable import");
+
         return sstableImporter.importNewSSTables(SSTableImporter.Options.options(srcPaths)
                                                                         .resetLevel(resetLevel)
                                                                         .clearRepaired(clearRepaired)
@@ -936,6 +942,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
                                           boolean extendedVerify, boolean copyData, boolean failOnMissingIndex,
                                           boolean validateIndexChecksum)
     {
+        TransactionDomainGuard.check(metadata(), "SSTable import");
+
         return sstableImporter.importNewSSTables(SSTableImporter.Options.options(srcPaths)
                                                                         .resetLevel(resetLevel)
                                                                         .clearRepaired(clearRepaired)
@@ -1516,6 +1524,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
     public void apply(PartitionUpdate update, CassandraWriteContext context, boolean updateIndexes)
 
     {
+        TransactionDomainGuard.check(update.metadata(), "column family apply");
+
         long start = nanoTime();
         OpOrder.Group opGroup = context.getGroup();
         CommitLogPosition commitLogPosition = context.getPosition();
@@ -1747,6 +1757,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
 
     public void addSSTables(Collection<SSTableReader> sstables)
     {
+        TransactionDomainGuard.check(metadata(), "SSTable publication");
+
         data.addSSTables(sstables);
         CompactionManager.instance.submitBackground(this);
     }
@@ -1819,6 +1831,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
     @VisibleForTesting
     public CompactionManager.AllSSTableOpStatus scrub(boolean disableSnapshot, boolean alwaysFail, IScrubber.Options options, int jobs) throws ExecutionException, InterruptedException
     {
+        TransactionDomainGuard.check(metadata(), "SSTable scrub");
+
         // skip snapshot creation during scrub, SEE JIRA 5891
         if (!disableSnapshot)
             data.notifyPreScrubbed();
@@ -2618,6 +2632,8 @@ public class ColumnFamilyStore implements ColumnFamilyStoreMBean, Memtable.Owner
      */
     private void truncateBlocking(boolean noSnapshot)
     {
+        TransactionDomainGuard.check(metadata(), "table truncate");
+
         // We have two goals here:
         // - truncate should delete everything written before truncate was invoked
         // - but not delete anything that isn't part of the snapshot we create.

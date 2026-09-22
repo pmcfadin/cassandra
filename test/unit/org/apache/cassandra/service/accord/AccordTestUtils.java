@@ -113,6 +113,10 @@ import org.apache.cassandra.service.accord.serializers.TableMetadatasAndKeys;
 import org.apache.cassandra.service.accord.txn.TxnData;
 import org.apache.cassandra.service.accord.txn.TxnQuery;
 import org.apache.cassandra.service.accord.txn.TxnRead;
+import org.apache.cassandra.service.consensus.txn.AccordTransactionCompiler;
+import org.apache.cassandra.service.consensus.txn.TransactionDomain;
+import org.apache.cassandra.service.consensus.txn.TransactionExecutionContext;
+import org.apache.cassandra.transport.Dispatcher;
 import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.concurrent.Condition;
 import org.apache.cassandra.utils.concurrent.UncheckedInterruptedException;
@@ -249,13 +253,23 @@ public class AccordTestUtils
     {
         TransactionStatement statement = parse(query);
         QueryOptions options = QueryProcessor.makeInternalOptions(statement, binds.toArray(new Object[binds.size()]));
-        return statement.createTxn(ClientState.forInternalCalls(), options);
+        return AccordTransactionCompiler.compile(statement.toPlan(ClientState.forInternalCalls(), options),
+                                                 new TransactionExecutionContext(TransactionDomain.DEFAULT_ACCORD,
+                                                                                  options.getConsistency(),
+                                                                                  options.getSerialConsistency(),
+                                                                                  options.getProtocolVersion(),
+                                                                                  Dispatcher.RequestTime.forImmediateExecution()));
     }
 
     public static Txn createTxn(String query, QueryOptions options)
     {
         TransactionStatement statement = parse(query);
-        return statement.createTxn(ClientState.forInternalCalls(), options);
+        return AccordTransactionCompiler.compile(statement.toPlan(ClientState.forInternalCalls(), options),
+                                                 new TransactionExecutionContext(TransactionDomain.DEFAULT_ACCORD,
+                                                                                  options.getConsistency(),
+                                                                                  options.getSerialConsistency(),
+                                                                                  options.getProtocolVersion(),
+                                                                                  Dispatcher.RequestTime.forImmediateExecution()));
     }
 
     public static TransactionStatement parse(String query)

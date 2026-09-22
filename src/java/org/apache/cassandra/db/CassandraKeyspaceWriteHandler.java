@@ -26,6 +26,7 @@ import org.apache.cassandra.db.commitlog.CommitLogPosition;
 import org.apache.cassandra.db.partitions.PartitionUpdate;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.schema.TableId;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.concurrent.OpOrder;
 
@@ -41,6 +42,9 @@ public class CassandraKeyspaceWriteHandler implements KeyspaceWriteHandler
     @Override
     public WriteContext beginWrite(Mutation mutation, boolean makeDurable) throws RequestExecutionException
     {
+        // Keep direct callers safe too; Keyspace.applyInternal performs the earlier whole-mutation check.
+        TransactionDomainGuard.check(mutation, "keyspace write begin");
+
         OpOrder.Group group = null;
         try
         {
@@ -66,6 +70,8 @@ public class CassandraKeyspaceWriteHandler implements KeyspaceWriteHandler
 
     private CommitLogPosition addToCommitLog(Mutation mutation)
     {
+        TransactionDomainGuard.check(mutation, "commit log append");
+
         // Usually one of these will be true, so first check if that's the case.
         boolean allSkipCommitlog = true;
         boolean noneSkipCommitlog = true;

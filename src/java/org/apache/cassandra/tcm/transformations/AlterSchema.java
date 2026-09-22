@@ -59,6 +59,7 @@ import org.apache.cassandra.schema.Tables;
 import org.apache.cassandra.schema.ViewMetadata;
 import org.apache.cassandra.schema.Views;
 import org.apache.cassandra.service.consensus.migration.ConsensusMigrationState;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tcm.ClusterMetadata.Transformer;
 import org.apache.cassandra.tcm.ClusterMetadataService;
@@ -120,6 +121,7 @@ public class AlterSchema implements Transformation
             schemaTransformation.enterExecution();
             // Guard against an invalid SchemaTransformation supplying a TableMetadata with a future epoch
             newKeyspaces = schemaTransformation.apply(prev);
+            TransactionDomainGuard.checkSchemaChange(prev, newKeyspaces);
             newKeyspaces.forEach(ksm -> {
                ksm.tables.forEach(tm -> {
                    if (tm.epoch.isAfter(prev.nextEpoch()))

@@ -72,6 +72,7 @@ import org.apache.cassandra.service.accord.topology.AccordStaleReplicas;
 import org.apache.cassandra.service.accord.topology.AccordTopology;
 import org.apache.cassandra.service.consensus.migration.ConsensusMigrationState;
 import org.apache.cassandra.service.consensus.migration.TableMigrationState;
+import org.apache.cassandra.service.consensus.txn.ConsistencyDomains;
 import org.apache.cassandra.tcm.extensions.ExtensionKey;
 import org.apache.cassandra.tcm.extensions.ExtensionValue;
 import org.apache.cassandra.tcm.membership.Directory;
@@ -116,6 +117,7 @@ public class ClusterMetadata
     public final LockedRanges lockedRanges;
     public final InProgressSequences inProgressSequences;
     public final ConsensusMigrationState consensusMigrationState;
+    public final ConsistencyDomains consistencyDomains;
     public final ImmutableMap<ExtensionKey<?,?>, ExtensionValue<?>> extensions;
     public final AccordStaleReplicas accordStaleReplicas;
     public final CMSMembership cmsMembership;
@@ -162,6 +164,7 @@ public class ClusterMetadata
              LockedRanges.EMPTY,
              InProgressSequences.EMPTY,
              ConsensusMigrationState.EMPTY,
+             ConsistencyDomains.EMPTY,
              ImmutableMap.of(),
              AccordStaleReplicas.EMPTY,
              CMSMembership.EMPTY);
@@ -192,9 +195,30 @@ public class ClusterMetadata
              lockedRanges,
              inProgressSequences,
              consensusMigrationState,
+             ConsistencyDomains.EMPTY,
              extensions,
              accordStaleReplicas,
              cmsMembership);
+    }
+
+    public ClusterMetadata(Epoch epoch,
+                           IPartitioner partitioner,
+                           DistributedSchema schema,
+                           Directory directory,
+                           TokenMap tokenMap,
+                           DataPlacements placements,
+                           AccordFastPath accordFastPath,
+                           LockedRanges lockedRanges,
+                           InProgressSequences inProgressSequences,
+                           ConsensusMigrationState consensusMigrationState,
+                           ConsistencyDomains consistencyDomains,
+                           Map<ExtensionKey<?, ?>, ExtensionValue<?>> extensions,
+                           AccordStaleReplicas accordStaleReplicas,
+                           CMSMembership cmsMembership)
+    {
+        this(EMPTY_METADATA_IDENTIFIER, epoch, partitioner, schema, directory, tokenMap, placements,
+             accordFastPath, lockedRanges, inProgressSequences, consensusMigrationState, consistencyDomains,
+             extensions, accordStaleReplicas, cmsMembership);
     }
 
     private ClusterMetadata(int metadataIdentifier,
@@ -208,6 +232,7 @@ public class ClusterMetadata
                             LockedRanges lockedRanges,
                             InProgressSequences inProgressSequences,
                             ConsensusMigrationState consensusMigrationState,
+                            ConsistencyDomains consistencyDomains,
                             Map<ExtensionKey<?, ?>, ExtensionValue<?>> extensions,
                             AccordStaleReplicas accordStaleReplicas,
                             CMSMembership cmsMembership)
@@ -227,6 +252,7 @@ public class ClusterMetadata
         this.lockedRanges = lockedRanges;
         this.inProgressSequences = inProgressSequences;
         this.consensusMigrationState = consensusMigrationState;
+        this.consistencyDomains = consistencyDomains;
         this.extensions = ImmutableMap.copyOf(extensions);
         this.locator = Locator.usingDirectory(directory);
         this.accordStaleReplicas = accordStaleReplicas;
@@ -441,6 +467,7 @@ public class ClusterMetadata
                                    capLastModified(lockedRanges, epoch),
                                    capLastModified(inProgressSequences, epoch),
                                    capLastModified(consensusMigrationState, epoch),
+                                   capLastModified(consistencyDomains, epoch),
                                    capLastModified(extensions, epoch),
                                    capLastModified(accordStaleReplicas, epoch),
                                    capLastModified(cmsMembership, epoch));
@@ -506,6 +533,7 @@ public class ClusterMetadata
                                    lockedRanges,
                                    inProgressSequences,
                                    consensusMigrationState,
+                                   consistencyDomains,
                                    extensions,
                                    accordStaleReplicas,
                                    initialCMS);
@@ -686,6 +714,7 @@ public class ClusterMetadata
         private LockedRanges lockedRanges;
         private InProgressSequences inProgressSequences;
         private ConsensusMigrationState consensusMigrationState;
+        private ConsistencyDomains consistencyDomains;
         private final Map<ExtensionKey<?, ?>, ExtensionValue<?>> extensions;
         private final Set<MetadataKey> modifiedKeys;
         private AccordStaleReplicas accordStaleReplicas;
@@ -704,6 +733,7 @@ public class ClusterMetadata
             this.lockedRanges = metadata.lockedRanges;
             this.inProgressSequences = metadata.inProgressSequences;
             this.consensusMigrationState = metadata.consensusMigrationState;
+            this.consistencyDomains = metadata.consistencyDomains;
             extensions = new HashMap<>(metadata.extensions);
             modifiedKeys = new HashSet<>();
             accordStaleReplicas = metadata.accordStaleReplicas;
@@ -930,6 +960,12 @@ public class ClusterMetadata
             return this;
         }
 
+        public Transformer with(ConsistencyDomains consistencyDomains)
+        {
+            this.consistencyDomains = Objects.requireNonNull(consistencyDomains, "consistencyDomains");
+            return this;
+        }
+
         public Transformer with(ExtensionKey<?, ?> key, ExtensionValue<?> obj)
         {
             if (MetadataKeys.CORE_METADATA.containsKey(key))
@@ -1037,6 +1073,12 @@ public class ClusterMetadata
                 consensusMigrationState = consensusMigrationState.withLastModified(epoch);
             }
 
+            if (consistencyDomains != base.consistencyDomains)
+            {
+                modifiedKeys.add(MetadataKeys.CONSISTENCY_DOMAINS);
+                consistencyDomains = consistencyDomains.withLastModified(epoch);
+            }
+
             if (consensusMigrationState != base.consensusMigrationState || schema != base.schema)
             {
                 consensusMigrationState.validateAgainstSchema(schema);
@@ -1059,6 +1101,7 @@ public class ClusterMetadata
                                                        lockedRanges,
                                                        inProgressSequences,
                                                        consensusMigrationState,
+                                                       consistencyDomains,
                                                        extensions,
                                                        accordStaleReplicas,
                                                        cmsMembership),
@@ -1078,6 +1121,7 @@ public class ClusterMetadata
                                        lockedRanges,
                                        inProgressSequences,
                                        consensusMigrationState,
+                                       consistencyDomains,
                                        extensions,
                                        accordStaleReplicas,
                                        cmsMembership);
@@ -1196,6 +1240,7 @@ public class ClusterMetadata
                ", lockedRanges=" + lockedRanges +
                ", consensusMigrationState=" + lockedRanges +
                ", inProgressSequences=" + inProgressSequences +
+               ", consistencyDomains=" + consistencyDomains +
                ", extensions=" + extensions +
                ", cmsMembership=" + cmsMembership +
                '}';
@@ -1225,6 +1270,7 @@ public class ClusterMetadata
                lockedRanges.equals(that.lockedRanges) &&
                inProgressSequences.equals(that.inProgressSequences) &&
                consensusMigrationState.equals(that.consensusMigrationState) &&
+               consistencyDomains.equals(that.consistencyDomains) &&
                accordStaleReplicas.equals(that.accordStaleReplicas) &&
                extensions.equals(that.extensions) &&
                cmsMembership.equals(that.cmsMembership);
@@ -1266,6 +1312,10 @@ public class ClusterMetadata
         {
             logger.warn("In progress sequences differ: {} != {}", inProgressSequences, other.inProgressSequences);
         }
+        if (!consistencyDomains.equals(other.consistencyDomains))
+        {
+            logger.warn("Consistency domains differ: {} != {}", consistencyDomains, other.consistencyDomains);
+        }
         if (!extensions.equals(other.extensions))
         {
             logger.warn("Extensions differ: {} != {}", extensions, other.extensions);
@@ -1279,7 +1329,9 @@ public class ClusterMetadata
     @Override
     public int hashCode()
     {
-        return Objects.hash(epoch, schema, directory, tokenMap, placements, accordFastPath, lockedRanges, inProgressSequences, consensusMigrationState, accordStaleReplicas, extensions, cmsMembership);
+        return Objects.hash(epoch, schema, directory, tokenMap, placements, accordFastPath, lockedRanges,
+                            inProgressSequences, consensusMigrationState, consistencyDomains, accordStaleReplicas,
+                            extensions, cmsMembership);
     }
 
     public static ClusterMetadata current()
@@ -1336,6 +1388,12 @@ public class ClusterMetadata
         @Override
         public void serialize(ClusterMetadata metadata, DataOutputPlus out, Version version) throws IOException
         {
+            if (version.isBefore(Version.V11) && !metadata.consistencyDomains.isEmpty())
+                throw new IllegalStateException("Cannot serialize non-empty transaction domains with metadata version " + version);
+            if (version.isBefore(Version.V12) && metadata.consistencyDomains.hasActive())
+                throw new IllegalStateException("Cannot serialize ACTIVE transaction domains with metadata version " + version);
+            for (org.apache.cassandra.service.consensus.txn.TransactionDomainDescriptor descriptor : metadata.consistencyDomains.domains())
+                descriptor.checkSerializationVersion(version);
             if (version.isAtLeast(Version.V1))
                 out.writeUTF(metadata.partitioner.getClass().getCanonicalName());
 
@@ -1375,6 +1433,8 @@ public class ClusterMetadata
             // From V9 CMS membership is directly encoded in ClusterMetadata
             if (version.isAtLeast(Version.V9))
                 CMSMembership.serializer.serialize(metadata.cmsMembership, out, version);
+            if (version.isAtLeast(Version.V11))
+                ConsistencyDomains.serializer.serialize(metadata.consistencyDomains, out, version);
         }
 
         @Override
@@ -1467,6 +1527,10 @@ public class ClusterMetadata
                 }
             }
 
+            ConsistencyDomains consistencyDomains = version.isAtLeast(Version.V11)
+                                                    ? ConsistencyDomains.serializer.deserialize(in, version)
+                                                    : ConsistencyDomains.EMPTY;
+
             return new ClusterMetadata(clusterIdentifier,
                                        epoch,
                                        partitioner,
@@ -1478,6 +1542,7 @@ public class ClusterMetadata
                                        lockedRanges,
                                        ips,
                                        consensusMigrationState,
+                                       consistencyDomains,
                                        extensions,
                                        staleReplicas,
                                        cmsMembership);
@@ -1503,6 +1568,12 @@ public class ClusterMetadata
         @Override
         public long serializedSize(ClusterMetadata metadata, Version version)
         {
+            if (version.isBefore(Version.V11) && !metadata.consistencyDomains.isEmpty())
+                throw new IllegalStateException("Cannot size non-empty transaction domains with metadata version " + version);
+            if (version.isBefore(Version.V12) && metadata.consistencyDomains.hasActive())
+                throw new IllegalStateException("Cannot size ACTIVE transaction domains with metadata version " + version);
+            for (org.apache.cassandra.service.consensus.txn.TransactionDomainDescriptor descriptor : metadata.consistencyDomains.domains())
+                descriptor.checkSerializationVersion(version);
             long size = TypeSizes.INT_SIZE;
             for (Map.Entry<ExtensionKey<?, ?>, ExtensionValue<?>> entry : metadata.extensions.entrySet())
                 size += ExtensionKey.serializer.serializedSize(entry.getKey(), version) +
@@ -1534,6 +1605,8 @@ public class ClusterMetadata
             // From V9 CMS membership is directly encoded in ClusterMetadata
             if (version.isAtLeast(Version.V9))
                 size += CMSMembership.serializer.serializedSize(metadata.cmsMembership, version);
+            if (version.isAtLeast(Version.V11))
+                size += ConsistencyDomains.serializer.serializedSize(metadata.consistencyDomains, version);
 
             return size;
         }

@@ -99,6 +99,7 @@ import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.service.ClientWarn;
 import org.apache.cassandra.service.accord.serializers.TableMetadatas;
 import org.apache.cassandra.service.consensus.migration.ConsensusRequestRouter;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tcm.Epoch;
 import org.apache.cassandra.tracing.Tracing;
@@ -530,6 +531,8 @@ public abstract class ReadCommand extends AbstractReadQuery
         COMMAND.set(this);
         try
         {
+            // This applies regardless of PotentialTxnConflicts: ALLOW is an execution hint, not ownership proof.
+            TransactionDomainGuard.check(metadata(), "local read");
             ColumnFamilyStore cfs = Keyspace.openAndGetStore(metadata());
             if (!potentialTxnConflicts.allowed)
                 ConsensusRequestRouter.validateSafeToReadNonTransactionally(this, cm);

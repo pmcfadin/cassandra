@@ -27,12 +27,14 @@ import javax.annotation.Nonnull;
 
 import org.apache.cassandra.dht.NormalizedRanges;
 import org.apache.cassandra.dht.Token;
+import org.apache.cassandra.exceptions.ExceptionCode;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.schema.TableId;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.consensus.migration.ConsensusMigrationState;
 import org.apache.cassandra.service.consensus.migration.ConsensusTableMigration;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tcm.Transformation;
 import org.apache.cassandra.tcm.sequences.LockedRanges;
@@ -74,6 +76,11 @@ public class BeginConsensusMigrationForTableAndRange implements Transformation
 
     public Result execute(ClusterMetadata prev)
     {
+        for (TableId table : tables)
+            if (prev.consistencyDomains.forTable(table) != null ||
+                TransactionDomainGuard.isReserved(prev.schema.getKeyspaces().getTableOrViewNullable(table)))
+                return new Rejected(ExceptionCode.INVALID, "Transaction domain is PREPARED (closed); consensus migration is not admitted");
+
         Transformer transformer = prev.transformer();
         Collection<TableMetadata> metadata = tables.stream().map(prev.schema::getTableMetadata).collect(Collectors.toList());
         ConsensusMigrationState consensusMigrationState = prev.consensusMigrationState.withRangesMigrating(metadata, ranges, false);

@@ -35,6 +35,7 @@ import org.apache.cassandra.net.Message;
 import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tcm.ClusterMetadataService;
 import org.apache.cassandra.tcm.Epoch;
@@ -56,6 +57,9 @@ public abstract class AbstractMutationVerbHandler<T extends IMutation> implement
 
     protected void processMessage(Message<T> message, InetAddressAndPort respondTo)
     {
+        // Reject before routing/schema work can lead to an eventual storage effect.
+        TransactionDomainGuard.checkTables(message.payload.getTableIds(), "mutation message arrival");
+
         if (message.epoch().isAfter(Epoch.FIRST))
         {
             ClusterMetadata metadata = ClusterMetadata.current();

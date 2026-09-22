@@ -32,6 +32,7 @@ import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.dht.Range;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.schema.TableId;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 
 import static org.apache.cassandra.concurrent.ExecutorFactory.Global.executorFactory;
@@ -66,6 +67,7 @@ public class StreamReceiveTask extends StreamTask
     public StreamReceiveTask(StreamSession session, TableId tableId, List<Range<Token>> ranges, int totalStreams, long totalSize)
     {
         super(session, tableId);
+        TransactionDomainGuard.check(tableId, "stream receive");
         Range.assertNormalized(ranges);
         this.receiver = ColumnFamilyStore.getIfExists(tableId).getStreamManager().createStreamReceiver(session, ranges, totalStreams);
         this.totalStreams = totalStreams;
@@ -90,9 +92,10 @@ public class StreamReceiveTask extends StreamTask
             return;
         }
 
+        Preconditions.checkArgument(tableId.equals(stream.getTableId()));
+        TransactionDomainGuard.check(tableId, "stream receive");
         remoteStreamsReceived += stream.getNumFiles();
         bytesReceived += stream.getSize();
-        Preconditions.checkArgument(tableId.equals(stream.getTableId()));
         logger.debug("received {} of {} total files, {} of total bytes {}", remoteStreamsReceived, totalStreams,
                      bytesReceived, stream.getSize());
 

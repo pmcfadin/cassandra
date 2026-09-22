@@ -53,6 +53,7 @@ import org.apache.cassandra.service.accord.AccordService;
 import org.apache.cassandra.service.accord.IAccordService;
 import org.apache.cassandra.service.accord.TimeOnlyRequestBookkeeping.LatencyRequestBookkeeping;
 import org.apache.cassandra.service.accord.topology.AccordTopology;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.streaming.IncomingStream;
 import org.apache.cassandra.streaming.StreamReceiver;
 import org.apache.cassandra.streaming.StreamSession;
@@ -93,6 +94,7 @@ public class CassandraStreamReceiver implements StreamReceiver
 
     public CassandraStreamReceiver(ColumnFamilyStore cfs, StreamSession session, List<Range<Token>> ranges, int totalFiles)
     {
+        TransactionDomainGuard.check(cfs.metadata(), "stream SSTable publication");
         this.cfs = cfs;
         this.session = session;
         // this is an "offline" transaction, as we currently manually expose the sstables once done;
@@ -218,6 +220,9 @@ public class CassandraStreamReceiver implements StreamReceiver
     @Override
     public void finished()
     {
+        // Recheck immediately before either the write path or direct SSTable
+        // publication in case ownership changed while files were in flight.
+        TransactionDomainGuard.check(cfs.metadata(), "stream SSTable publication");
         CassandraVersion minVersion = ClusterMetadata.current().directory.clusterMinVersion.cassandraVersion;
         checkNotNull(minVersion, "Unable to determine minimum cluster version");
         if (session.streamOperation().requiresBarrierTransaction()

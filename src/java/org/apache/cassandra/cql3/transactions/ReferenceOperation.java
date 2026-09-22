@@ -36,6 +36,7 @@ import org.apache.cassandra.db.rows.CellPath;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.accord.txn.TxnReferenceOperation;
+import org.apache.cassandra.service.consensus.txn.TransactionOperation;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
 import static org.apache.cassandra.cql3.statements.RequestValidations.checkTrue;
@@ -106,6 +107,16 @@ public class ReferenceOperation
                                          key != null ? key.bindAndGet(options) : null,
                                          field != null ? field.bytes : null,
                                          value.bindAndGet(options));
+    }
+
+    public TransactionOperation toTransactionOperation(QueryOptions options)
+    {
+        return new TransactionOperation(TransactionOperation.Kind.valueOf(kind.name()),
+                                        receiver,
+                                        table,
+                                        key != null ? key.bindAndGet(options) : null,
+                                        field != null ? field.bytes : null,
+                                        value.toTransactionValue(options));
     }
 
     public static class Raw

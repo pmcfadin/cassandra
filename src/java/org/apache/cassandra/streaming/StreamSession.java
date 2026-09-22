@@ -65,9 +65,12 @@ import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.locator.RangesAtEndpoint;
 import org.apache.cassandra.locator.Replica;
 import org.apache.cassandra.metrics.StreamingMetrics;
+import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.TableId;
+import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.streaming.async.StreamingMultiplexedChannel;
 import org.apache.cassandra.streaming.messages.CompleteMessage;
 import org.apache.cassandra.streaming.messages.IncomingStreamMessage;
@@ -437,6 +440,7 @@ public class StreamSession
      */
     public void addStreamRequest(String keyspace, RangesAtEndpoint fullRanges, RangesAtEndpoint transientRanges, Collection<String> columnFamilies)
     {
+        checkStreamTables(keyspace, columnFamilies, "stream request");
         //It should either be a dummy address for repair or if it's a bootstrap/move/rebuild it should be this node
         assert all(fullRanges, Replica::isSelf) || RangesAtEndpoint.isDummyList(fullRanges) : fullRanges.toString();
         assert all(transientRanges, Replica::isSelf) || RangesAtEndpoint.isDummyList(transientRanges) : transientRanges.toString();
@@ -455,7 +459,10 @@ public class StreamSession
     synchronized void addTransferRanges(String keyspace, RangesAtEndpoint replicas, Collection<String> columnFamilies, boolean flushTables)
     {
         failIfFinished();
+        checkStreamTables(keyspace, columnFamilies, "stream transfer");
         Collection<ColumnFamilyStore> stores = getColumnFamilyStores(keyspace, columnFamilies);
+        for (ColumnFamilyStore store : stores)
+            TransactionDomainGuard.check(store.metadata(), "stream transfer");
         if (flushTables)
             flushSSTables(stores);
 
@@ -522,6 +529,7 @@ public class StreamSession
         for (OutgoingStream stream: streams)
         {
             TableId tableId = stream.getTableId();
+            TransactionDomainGuard.check(tableId, "stream transfer");
             StreamTransferTask task = transfers.get(tableId);
             if (task == null)
             {
@@ -809,6 +817,8 @@ public class StreamSession
     @VisibleForTesting
     void prepareAsync(Collection<StreamRequest> requests, Collection<StreamSummary> summaries)
     {
+        checkStreamRequests(requests);
+        checkStreamSummaries(summaries);
         if (StreamOperation.REPAIR == streamOperation())
             checkAvailableDiskSpaceAndCompactions(summaries);
         processStreamRequests(requests);
@@ -838,6 +848,7 @@ public class StreamSession
 
     private void prepareSynAck(PrepareSynAckMessage msg)
     {
+        checkStreamSummaries(msg.summaries);
         if (StreamOperation.REPAIR == streamOperation())
             checkAvailableDiskSpaceAndCompactions(msg.summaries);
         if (!msg.summaries.isEmpty())
@@ -892,6 +903,35 @@ public class StreamSession
 
         if (!rejectedRequests.isEmpty())
             throw new StreamRequestOutOfTokenRangeException(rejectedRequests);
+    }
+
+    private static void checkStreamRequests(Collection<StreamRequest> requests)
+    {
+        for (StreamRequest request : requests)
+            checkStreamTables(request.keyspace, request.columnFamilies, "stream request");
+    }
+
+    private static void checkStreamSummaries(Collection<StreamSummary> summaries)
+    {
+        for (StreamSummary summary : summaries)
+            if (summary.files > 0)
+                TransactionDomainGuard.check(summary.tableId, "stream receive");
+    }
+
+    private static void checkStreamTables(String keyspace, Collection<String> columnFamilies, String operation)
+    {
+        if (columnFamilies.isEmpty())
+        {
+            TransactionDomainGuard.checkKeyspace(keyspace, operation);
+            return;
+        }
+
+        for (String columnFamily : columnFamilies)
+        {
+            TableMetadata metadata = Schema.instance.getTableMetadata(keyspace, columnFamily);
+            if (metadata != null)
+                TransactionDomainGuard.check(metadata, operation);
+        }
     }
     /**
      * In the case where we have an error checking disk space we allow the Operation to continue.
@@ -1270,6 +1310,7 @@ public class StreamSession
     public synchronized void prepareReceiving(StreamSummary summary)
     {
         failIfFinished();
+        TransactionDomainGuard.check(summary.tableId, "stream receive");
         if (summary.files > 0)
             receivers.put(summary.tableId, new StreamReceiveTask(this, summary.tableId, summary.ranges, summary.files, summary.totalSize));
     }

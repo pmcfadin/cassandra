@@ -126,6 +126,8 @@ import org.apache.cassandra.service.accord.serializers.TableMetadatasAndKeys.Key
 import org.apache.cassandra.service.accord.txn.TxnReferenceOperation;
 import org.apache.cassandra.service.accord.txn.TxnReferenceOperations;
 import org.apache.cassandra.service.accord.txn.TxnWrite;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
+import org.apache.cassandra.service.consensus.txn.TransactionOperation;
 import org.apache.cassandra.service.disk.usage.DiskUsageBroadcaster;
 import org.apache.cassandra.service.paxos.Ballot;
 import org.apache.cassandra.service.paxos.BallotGenerator;
@@ -707,6 +709,7 @@ public abstract class ModificationStatement implements CQLStatement.SingleKeyspa
     public ResultMessage execute(QueryState queryState, QueryOptions options, Dispatcher.RequestTime requestTime)
     throws RequestExecutionException, RequestValidationException
     {
+        TransactionDomainGuard.check(metadata, hasConditions() ? "CAS" : "WRITE");
         if (options.getConsistency() == null)
             throw new InvalidRequestException("Invalid empty consistency level");
 
@@ -907,15 +910,21 @@ public abstract class ModificationStatement implements CQLStatement.SingleKeyspa
     public ResultMessage executeInternalWithoutCondition(QueryState queryState, QueryOptions options, Dispatcher.RequestTime requestTime)
     throws RequestValidationException, RequestExecutionException
     {
+        TransactionDomainGuard.check(metadata, "internal WRITE");
         long timestamp = options.getTimestamp(queryState);
         long nowInSeconds = options.getNowInSeconds(queryState);
-        for (IMutation mutation : getMutations(queryState.getClientState(), options, true, timestamp, nowInSeconds, requestTime))
+        List<? extends IMutation> mutations = getMutations(queryState.getClientState(), options, true, timestamp, nowInSeconds, requestTime);
+        for (IMutation mutation : mutations)
+        {
+            TransactionDomainGuard.checkTables(mutation.getTableIds(), "internal WRITE");
             mutation.apply();
+        }
         return null;
     }
 
     public ResultMessage executeInternalWithCondition(QueryState state, QueryOptions options, Dispatcher.RequestTime requestTime)
     {
+        TransactionDomainGuard.check(metadata, "internal CAS");
         CQL3CasRequest request = makeCasRequest(state, options, requestTime);
 
         try (RowIterator result = casInternal(state.getClientState(), request, options.getTimestamp(state), options.getNowInSeconds(state)))
@@ -1013,12 +1022,34 @@ public abstract class ModificationStatement implements CQLStatement.SingleKeyspa
         return new TxnReferenceOperations(metadata, clusterings, regularOps, staticOps);
     }
 
-    private List<Clustering<?>> txnClusterings(QueryOptions options, ClientState state)
+    public List<Clustering<?>> txnClusterings(QueryOptions options, ClientState state)
     {
         if (restrictions.hasAllPrimaryKeyColumnsRestrictedByEqualities())
             return new ArrayList<>(restrictions.getClusteringColumns(options, state));
         // Range/Partition delete, static only
         return Collections.emptyList();
+    }
+
+    public List<TransactionOperation> getTxnRegularOperations(QueryOptions options)
+    {
+        return toTransactionOperations(operations.regularSubstitutions(), options);
+    }
+
+    public List<TransactionOperation> getTxnStaticOperations(QueryOptions options)
+    {
+        return toTransactionOperations(operations.staticSubstitutions(), options);
+    }
+
+    private static List<TransactionOperation> toTransactionOperations(List<ReferenceOperation> operations,
+                                                                       QueryOptions options)
+    {
+        if (operations.isEmpty())
+            return Collections.emptyList();
+
+        List<TransactionOperation> result = new ArrayList<>(operations.size());
+        for (ReferenceOperation operation : operations)
+            result.add(operation.toTransactionOperation(options));
+        return result;
     }
 
     public ModificationStatement forTxn()

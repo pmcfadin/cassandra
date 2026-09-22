@@ -24,12 +24,14 @@ import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.exceptions.ExceptionCode;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.schema.DistributedSchema;
 import org.apache.cassandra.schema.KeyspaceMetadata;
 import org.apache.cassandra.schema.Keyspaces;
 import org.apache.cassandra.schema.TableMetadata;
+import org.apache.cassandra.service.consensus.txn.TransactionDomainGuard;
 import org.apache.cassandra.tcm.ClusterMetadata;
 import org.apache.cassandra.tcm.Transformation;
 import org.apache.cassandra.tcm.sequences.DropAccordTable.TableReference;
@@ -75,6 +77,11 @@ public class FinishDropAccordTable implements Transformation
     @Override
     public Result execute(ClusterMetadata prev)
     {
+        if (prev.consistencyDomains.forTable(tableRef.id) != null ||
+            TransactionDomainGuard.isReserved(prev.schema.getKeyspaces().getTableOrViewNullable(tableRef.id)))
+            return new Rejected(ExceptionCode.INVALID,
+                                "Transaction domain is PREPARED (closed); Accord table drop is not admitted");
+
         // In every case we remove the operation to drop this table from the set of in-flight sequences
         ClusterMetadata.Transformer proposed = prev.transformer()
                                                    .with(prev.inProgressSequences.without(tableRef));

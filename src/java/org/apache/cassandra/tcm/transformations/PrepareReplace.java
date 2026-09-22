@@ -83,6 +83,8 @@ public class PrepareReplace implements Transformation
     @Override
     public Result execute(ClusterMetadata prev)
     {
+        if (!prev.consistencyDomains.isEmpty())
+            return new Rejected(INVALID, "Cannot prepare a node replacement while transaction domains are reserved");
         if (prev.directory.peerState(replaced) != NodeState.JOINED)
             return new Rejected(INVALID, String.format("Rejecting this plan as the replaced node %s is in state %s", replaced, prev.directory.peerState(replaced)));
 

@@ -89,6 +89,17 @@ public enum Version
      */
     V10(10),
 
+    /**
+     * - Durable closed transaction-domain reservations
+     */
+    V11(11),
+
+    /** External transaction-domain activation and binding metadata. */
+    V12(12),
+
+    /** Ratis transaction-domain binding metadata. */
+    V13(13),
+
     UNKNOWN(Integer.MAX_VALUE);
 
     /**

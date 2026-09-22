@@ -132,6 +132,8 @@ public class PrepareJoin implements Transformation
     @Override
     public Result execute(ClusterMetadata prev)
     {
+        if (!prev.consistencyDomains.isEmpty())
+            return new Rejected(INVALID, "Cannot prepare a node join while transaction domains are reserved");
         if (!ALLOWED_STATES.contains(prev.directory.peerState(nodeId)))
             return new Rejected(INVALID, String.format("Rejecting this plan as the node %s is in state %s",
                                                        nodeId, prev.directory.peerState(nodeId)));

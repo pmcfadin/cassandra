@@ -81,10 +81,19 @@ public class Startup implements Transformation
                                               newNodeVersion, clusterVersion, clusterVersion));
         }
 
+        if (!prev.consistencyDomains.isEmpty() && newNodeVersion.isBefore(prev.consistencyDomains.minimumVersion()))
+        {
+            return new Rejected(INVALID,
+                                "Cannot start a node with metadata serialization version " + newNodeVersion +
+                                " while transaction-domain metadata exists; version " + prev.consistencyDomains.minimumVersion() + " or higher is required");
+        }
+
         ClusterMetadata.Transformer next = prev.transformer();
         NodeAddresses oldAddresses = prev.directory.addresses.get(nodeId);
         if (!oldAddresses.equals(addresses))
         {
+            if (!prev.consistencyDomains.isEmpty())
+                return new Rejected(INVALID, "Cannot update node addresses while transaction domains are reserved");
             if (!prev.inProgressSequences.isEmpty() && prev.directory.commonSerializationVersion.isBefore(Version.V10))
                 return new Rejected(INVALID, "Cannot update address of the node while there are in-progress sequences until the whole cluster is running metadata serialization version V10");
             for (Map.Entry<NodeId, NodeAddresses> entry : prev.directory.addresses.entrySet())

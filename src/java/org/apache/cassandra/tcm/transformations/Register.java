@@ -76,10 +76,10 @@ public class Register implements Transformation
     {
         // Ensure the joining node can read existing cluster metadata.
         // Skip check for empty directory (first node in a new cluster).
+        Version newNodeVersion = version.serializationVersion();
         if (!prev.directory.isEmpty())
         {
             Version clusterVersion = prev.directory.commonSerializationVersion;
-            Version newNodeVersion = version.serializationVersion();
             if (newNodeVersion.isBefore(clusterVersion))
             {
                 return new Rejected(INVALID,
@@ -90,6 +90,14 @@ public class Register implements Transformation
                                                   "metadata serialization version %s or higher before joining the cluster.",
                                                   newNodeVersion, clusterVersion, clusterVersion));
             }
+
+        }
+
+        if (!prev.consistencyDomains.isEmpty() && newNodeVersion.isBefore(prev.consistencyDomains.minimumVersion()))
+        {
+            return new Rejected(INVALID,
+                                "Cannot register a node with metadata serialization version " + newNodeVersion +
+                                " while transaction-domain metadata exists; version " + prev.consistencyDomains.minimumVersion() + " or higher is required");
         }
 
         for (Map.Entry<NodeId, NodeAddresses> entry : prev.directory.addresses.entrySet())
