@@ -58,6 +58,8 @@ import org.apache.cassandra.io.sstable.metadata.MetadataCollector;
 import org.apache.cassandra.io.sstable.metadata.MetadataComponent;
 import org.apache.cassandra.io.sstable.metadata.MetadataType;
 import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
+import org.apache.cassandra.io.sstable.representation.RepresentationWriters;
+import org.apache.cassandra.io.sstable.representation.SSTableRepresentations;
 import org.apache.cassandra.io.util.MmappedRegionsCache;
 import org.apache.cassandra.utils.Throwables;
 import org.apache.cassandra.utils.TimeUUID;
@@ -82,6 +84,7 @@ public abstract class SSTableWriter extends SSTable implements Transactional
     public final MetadataCollector metadataCollector;
     public final SerializationHeader header;
     protected final List<SSTableFlushObserver> observers;
+    protected final RepresentationWriters representations;
     protected final MmappedRegionsCache mmappedRegionsCache;
     protected final TransactionalProxy txnProxy = txnProxy();
     protected final ILifecycleTransaction txn;
@@ -124,6 +127,8 @@ public abstract class SSTableWriter extends SSTable implements Transactional
 
         try
         {
+            this.representations = SSTableRepresentations.newWriters(descriptor, metadata.getLocal(), header, txn.opType());
+
             ArrayList<SSTableFlushObserver> observers = new ArrayList<>();
             this.observers = Collections.unmodifiableList(observers);
             for (Index.Group group : builder.getIndexGroups())
@@ -157,8 +162,13 @@ public abstract class SSTableWriter extends SSTable implements Transactional
     protected void handleConstructionFailure(Throwable ex)
     {
         logger.warn("Failed to open " + descriptor + " for writing", ex);
-        for (int i = observers.size()-1; i >= 0; i--)
-            observers.get(i).abort(ex);
+        if (observers != null)
+        {
+            for (int i = observers.size() - 1; i >= 0; i--)
+                observers.get(i).abort(ex);
+        }
+        if (representations != null)
+            representations.abort(ex);
         descriptor.getFormat().deleteOrphanedComponents(descriptor, components);
         txn.untrackNew(this);
     }
@@ -395,6 +405,9 @@ public abstract class SSTableWriter extends SSTable implements Transactional
             transactionals.get().forEach(Transactional::prepareToCommit);
             new StatsComponent(finalizeMetadata()).save(descriptor);
 
+            // representations are finished after the data, so they are only ever published with a complete sstable
+            components.addAll(representations.finish());
+
             // save the table of components
             TOCComponent.updateTOC(descriptor, components);
 
@@ -414,6 +427,8 @@ public abstract class SSTableWriter extends SSTable implements Transactional
         {
             for (Transactional t : transactionals.get())
                 accumulate = t.abort(accumulate);
+
+            accumulate = representations.abort(accumulate);
 
             if (!finalReaderAccessed && finalReader != null)
             {

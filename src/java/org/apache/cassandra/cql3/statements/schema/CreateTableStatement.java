@@ -141,7 +141,8 @@ public final class CreateTableStatement extends AlterSchemaStatement
     @Override
     public boolean compatibleWith(ClusterMetadata metadata)
     {
-        return metadata.directory.commonSerializationVersion.isAtLeast(Version.V0);
+        Version required = attrs.hasOption(TableParams.Option.REPRESENTATION) ? Version.V11 : Version.V0;
+        return metadata.directory.commonSerializationVersion.isAtLeast(required);
     }
 
     public Keyspaces apply(ClusterMetadata metadata)
@@ -175,6 +176,10 @@ public final class CreateTableStatement extends AlterSchemaStatement
             builder.id(TableId.get(metadata));
         TableMetadata table = builder.build();
         table.validate();
+
+        // only the coordinator has a client state; the implementation need not be present on every node
+        if (state != null)
+            table.params.representation.validate(table);
 
         if (keyspace.replicationStrategy.hasTransientReplicas()
             && table.params.readRepair != ReadRepairStrategy.NONE)

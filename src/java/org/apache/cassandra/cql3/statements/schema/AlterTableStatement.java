@@ -680,7 +680,8 @@ public abstract class AlterTableStatement extends AlterSchemaStatement
         @Override
         public boolean compatibleWith(ClusterMetadata metadata)
         {
-            return metadata.directory.commonSerializationVersion.isAtLeast(Version.V0);
+            Version required = attrs.hasOption(Option.REPRESENTATION) ? Version.V11 : Version.V0;
+            return metadata.directory.commonSerializationVersion.isAtLeast(required);
         }
 
         public KeyspaceMetadata apply(Epoch epoch, KeyspaceMetadata keyspace, TableMetadata table, ClusterMetadata metadata)
@@ -712,7 +713,12 @@ public abstract class AlterTableStatement extends AlterSchemaStatement
 
             params = validateAndUpdateTransactionalMigration(table.isCounter(), table.params, params);
 
-            return keyspace.withSwapped(keyspace.tables.withSwapped(table.withSwapped(params)));
+            TableMetadata altered = table.withSwapped(params);
+            // only the coordinator has a client state; the implementation need not be present on every node
+            if (state != null && attrs.hasOption(Option.REPRESENTATION))
+                params.representation.validate(altered);
+
+            return keyspace.withSwapped(keyspace.tables.withSwapped(altered));
         }
     }
 

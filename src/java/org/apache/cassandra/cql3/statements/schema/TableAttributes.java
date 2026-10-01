@@ -32,6 +32,7 @@ import org.apache.cassandra.schema.CachingParams;
 import org.apache.cassandra.schema.CompactionParams;
 import org.apache.cassandra.schema.CompressionParams;
 import org.apache.cassandra.schema.MemtableParams;
+import org.apache.cassandra.schema.RepresentationParams;
 import org.apache.cassandra.schema.Schema;
 import org.apache.cassandra.schema.SchemaConstants;
 import org.apache.cassandra.schema.TableId;
@@ -199,6 +200,9 @@ public final class TableAttributes extends PropertyDefinitions
 
         if (hasOption(Option.AUTO_REPAIR))
             builder.automatedRepair(AutoRepairParams.fromMap(getMap(Option.AUTO_REPAIR)));
+
+        if (hasOption(Option.REPRESENTATION))
+            builder.representation(RepresentationParams.fromMap(getMap(Option.REPRESENTATION)));
 
         return builder.build();
     }

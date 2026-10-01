@@ -101,7 +101,8 @@ public final class TableParams
         TRANSACTIONAL_MODE,
         TRANSACTIONAL_MIGRATION_FROM,
         PENDING_DROP,
-        AUTO_REPAIR;
+        AUTO_REPAIR,
+        REPRESENTATION;
 
         @Override
         public String toString()
@@ -136,6 +137,7 @@ public final class TableParams
     public final boolean pendingDrop;
 
     public final AutoRepairParams autoRepair;
+    public final RepresentationParams representation;
 
     private TableParams(Builder builder)
     {
@@ -167,6 +169,7 @@ public final class TableParams
         pendingDrop = builder.pendingDrop;
         checkNotNull(transactionalMigrationFrom);
         autoRepair = builder.autoRepair;
+        representation = builder.representation;
     }
 
     public static Builder builder()
@@ -200,7 +203,8 @@ public final class TableParams
                             .transactionalMode(params.transactionalMode)
                             .transactionalMigrationFrom(params.transactionalMigrationFrom)
                             .pendingDrop(params.pendingDrop)
-                            .automatedRepair(params.autoRepair);
+                            .automatedRepair(params.autoRepair)
+                            .representation(params.representation);
     }
 
     public Builder unbuild()
@@ -302,7 +306,8 @@ public final class TableParams
             && transactionalMode == p.transactionalMode
             && transactionalMigrationFrom == p.transactionalMigrationFrom
             && pendingDrop == p.pendingDrop
-            && autoRepair.equals(p.autoRepair);
+            && autoRepair.equals(p.autoRepair)
+            && representation.equals(p.representation);
     }
 
     @Override
@@ -332,7 +337,8 @@ public final class TableParams
                                 transactionalMode,
                                 transactionalMigrationFrom,
                                 pendingDrop,
-                                autoRepair);
+                                autoRepair,
+                                representation);
     }
 
     @Override
@@ -365,6 +371,7 @@ public final class TableParams
                           .add(Option.TRANSACTIONAL_MIGRATION_FROM.toString(), transactionalMigrationFrom)
                           .add(PENDING_DROP.toString(), pendingDrop)
                           .add(Option.AUTO_REPAIR.toString(), autoRepair)
+                          .add(Option.REPRESENTATION.toString(), representation)
                           .toString();
     }
 
@@ -419,6 +426,9 @@ public final class TableParams
                .append("AND read_repair = ").appendWithSingleQuotes(readRepair.toString())
                .newLine();
 
+        if (representation.isEnabled())
+            builder.append("AND representation = ").append(representation.asMap()).newLine();
+
         if (!isView)
         {
                builder.append("AND transactional_mode = ").appendWithSingleQuotes(transactionalMode.toString())
@@ -464,6 +474,7 @@ public final class TableParams
         public boolean pendingDrop = false;
 
         private AutoRepairParams autoRepair = AutoRepairParams.DEFAULT;
+        private RepresentationParams representation = RepresentationParams.NONE;
         public Builder()
         {
         }
@@ -622,6 +633,12 @@ public final class TableParams
             autoRepair = val;
             return this;
         }
+
+        public Builder representation(RepresentationParams val)
+        {
+            representation = val;
+            return this;
+        }
     }
 
     public static class Serializer implements MetadataSerializer<TableParams>
@@ -660,6 +677,8 @@ public final class TableParams
             }
             if (version.isAtLeast(Version.V8))
                 out.writeUTF(t.securityLabel);
+            if (version.isAtLeast(Version.V11))
+                serializeMap(t.representation.asMap(), out);
         }
 
         public TableParams deserialize(DataInputPlus in, Version version) throws IOException
@@ -693,6 +712,8 @@ public final class TableParams
             }
             if (version.isAtLeast(Version.V8))
                 builder.securityLabel(in.readUTF());
+            if (version.isAtLeast(Version.V11))
+                builder.representation(RepresentationParams.fromMap(deserializeMap(in)));
             return builder.build();
         }
 
@@ -728,6 +749,8 @@ public final class TableParams
             {
                 size += sizeof(t.securityLabel);
             }
+            if (version.isAtLeast(Version.V11))
+                size += serializedSizeMap(t.representation.asMap());
             return size;
         }
 

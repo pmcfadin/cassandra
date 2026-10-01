@@ -206,6 +206,7 @@ public abstract class SortedTableWriter<P extends SortedTablePartitionWriter, I 
         metadataCollector.updatePartitionDeletion(partitionLevelDeletion);
 
         onStartPartition(key);
+        representations.startPartition(key, partitionLevelDeletion);
     }
 
     private void addStaticRow(DecoratedKey key, Row row) throws IOException
@@ -217,6 +218,7 @@ public abstract class SortedTableWriter<P extends SortedTablePartitionWriter, I 
             Rows.collectStats(row, metadataCollector);
 
         onStaticRow(row);
+        representations.staticRow(row);
     }
 
     private void addUnfiltered(DecoratedKey key, Unfiltered unfiltered, boolean isRowFirstOrLast) throws IOException
@@ -237,6 +239,7 @@ public abstract class SortedTableWriter<P extends SortedTablePartitionWriter, I 
         Rows.collectStats(row, metadataCollector);
 
         onRow(row);
+        representations.unfiltered(row);
     }
 
     private void addRangeTomstoneMarker(RangeTombstoneMarker marker, boolean isRowFirstOrLast) throws IOException
@@ -257,12 +260,14 @@ public abstract class SortedTableWriter<P extends SortedTablePartitionWriter, I 
         }
 
         onRangeTombstoneMarker(marker);
+        representations.unfiltered(marker);
     }
 
     private AbstractRowIndexEntry endPartition(DecoratedKey key, DeletionTime partitionLevelDeletion) throws IOException
     {
         // partitionLength not inclusive of last byte for BIG/default impl, but something different for BTI (and maybe other impls)
         long finishResult = partitionWriter.finish();
+        representations.endPartition();
 
         long endPosition = dataWriter.position();
         long partitionSize = endPosition - partitionWriter.getPartitionStartPosition();
