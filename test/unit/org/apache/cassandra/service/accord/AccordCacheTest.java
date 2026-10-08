@@ -17,6 +17,7 @@
  */
 package org.apache.cassandra.service.accord;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 import org.agrona.concurrent.NoOpLock;
@@ -448,6 +449,66 @@ public class AccordCacheTest
         Assert.assertFalse(instance.keyIsCached("1", SafeString.class));
         Assert.assertFalse(instance.keyIsCached("2", SafeString.class));
         Assert.assertFalse(instance.keyIsCached("3", SafeString.class));
+    }
+
+    /**
+     * Reproducer for accord-review/ACCORD-ASSESSMENT.md confirmed critical #2:
+     * "Save failures are reported as durability success"
+     * (AccordCacheEntry.java:549, method {@code saved(Object identity, Throwable fail)}).
+     *
+     * TRIGGER: an async save whose Runnable throws (simulating a journal/system-table
+     *          write failure — IOException, commit log stopped, serialization bug).
+     * HARNESS: the real {@link AccordCache#saveWhenReadyExclusive} + {@link SaveExecutor}
+     *          path, which is exactly what {@code AccordCommandStore.ensureDurable()} and
+     *          {@code AccordService.flushCaches()} use to register their durability/flush
+     *          completion callback.
+     * ORACLE:  the {@code onSuccess} callback registered via saveWhenReadyExclusive must
+     *          NOT run when the save failed. Correct behavior: only a genuinely successful
+     *          save should signal completion to a durability/flush waiter.
+     *
+     * Current (buggy) behavior: {@code AccordCacheEntry.saved()} calls
+     * {@code UniqueSave.notify(...)} unconditionally, before it inspects the {@code fail}
+     * argument, so the callback fires even though the entry transitions to FAILED_TO_SAVE
+     * immediately afterward. This test asserts the *correct* behavior and therefore fails
+     * on current trunk.
+     */
+    @Test
+    public void saveFailureMustNotFireDurabilityCallback()
+    {
+        AccordCacheMetrics cacheMetrics = new AccordCacheMetrics(nextMetricId());
+        AccordCacheMetrics.Shard shard = cacheMetrics.newShard(new NoOpLock());
+
+        ManualExecutor executor = new ManualExecutor();
+        RuntimeException injectedSaveFailure = new RuntimeException("simulated journal save failure");
+
+        AccordCache cache = new AccordCache(saveExecutor(executor), 500);
+        AccordCache.Type<String, String, SafeString> type =
+        cache.newType(String.class, (s, k) -> k,
+                      (s, k, c, o) -> (Runnable) () -> { throw injectedSaveFailure; }, // save Runnable always fails
+                      Function.identity(), (s, k, v) -> true, String::length, SafeString::new, shard);
+        AccordCache.Type<String, String, SafeString>.Instance instance = type.newInstance(null);
+
+        SafeString safeString = instance.acquire("1");
+        testLoad(executor, safeString, "1");
+        safeString.set("1*");
+        Assert.assertEquals(Status.MODIFIED, safeString.global().status());
+
+        AtomicBoolean durabilityCallbackFired = new AtomicBoolean(false);
+        cache.saveWhenReadyExclusive(safeString.global(), () -> durabilityCallbackFired.set(true));
+        Assert.assertEquals(Status.SAVING, safeString.global().status());
+        Assert.assertFalse("durability callback must not fire before the save even runs",
+                            durabilityCallbackFired.get());
+
+        // Runs the SaveExecutor task: the save Runnable throws, which drives
+        // AccordCacheEntry.saved(identity, injectedSaveFailure).
+        executor.runOne();
+
+        Assert.assertEquals(Status.FAILED_TO_SAVE, safeString.global().status());
+        Assert.assertSame(injectedSaveFailure, safeString.global().failure());
+        Assert.assertFalse("Durability callback fired despite the save failing — "
+                            + "AccordCacheEntry.saved() fires UniqueSave.notify() before checking `fail` "
+                            + "(ACCORD-ASSESSMENT.md confirmed critical #2, AccordCacheEntry.java:549)",
+                            durabilityCallbackFired.get());
     }
 
     @Test

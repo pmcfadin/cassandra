@@ -362,6 +362,20 @@ public class AccordTestUtils
     public static AccordCommandStore createAccordCommandStore(
         Node.Id node, LongSupplier now, Topology topology, AccordExecutor executor)
     {
+        AccordAgent agent = new AccordAgent();
+        agent.setup(Id.NONE);
+        if (new File(DatabaseDescriptor.getAccordJournalDirectory()).exists())
+            ServerTestUtils.cleanupDirectory(DatabaseDescriptor.getAccordJournalDirectory());
+        AccordConfig.JournalConfig spec = new AccordConfig.JournalConfig();
+        spec.flushPeriod = new DurationSpec.IntSecondsBound(1);
+        AccordJournal journal = new AccordJournal(spec);
+        journal.start(null);
+        return createAccordCommandStore(node, now, topology, executor, journal, 0, agent);
+    }
+
+    public static AccordCommandStore createAccordCommandStore(
+        Node.Id node, LongSupplier now, Topology topology, AccordExecutor executor, AccordJournal journal, int storeId, AccordAgent agent)
+    {
         NodeCommandStoreService time = new NodeCommandStoreService()
         {
             @Override
@@ -395,17 +409,8 @@ public class AccordTestUtils
             @Override public void reportLocalExecution(TxnId txnId, Route<?> route, Ballot ballot, Timestamp applyAt, Writes writes, Result result) {}
         };
 
-        AccordAgent agent = new AccordAgent();
-        agent.setup(Id.NONE);
-        if (new File(DatabaseDescriptor.getAccordJournalDirectory()).exists())
-            ServerTestUtils.cleanupDirectory(DatabaseDescriptor.getAccordJournalDirectory());
-        AccordConfig.JournalConfig spec = new AccordConfig.JournalConfig();
-        spec.flushPeriod = new DurationSpec.IntSecondsBound(1);
-        AccordJournal journal = new AccordJournal(spec);
-        journal.start(null);
-
         Ranges ranges = topology.rangesForNode(node);
-        return new AccordCommandStore(0, time, agent, null,
+        return new AccordCommandStore(storeId, time, agent, null,
                                                            cs -> new NoOpProgressLog(),
                                                            cs -> new DefaultLocalListeners(null, new NoOpRemoteListeners(), new NoOpNotifySink()),
                                       new RangesForEpoch(1, ranges), journal, executor);
