@@ -93,15 +93,6 @@ public final class JavaBasedUDFunction extends UDFunction
 
     private static final AtomicInteger classSequence = new AtomicInteger();
 
-    // use a JVM standard ExecutorService as ExecutorPlus references internal
-    // classes, which triggers AccessControlException from the UDF sandbox
-    private static final UDFExecutorService executor =
-        new UDFExecutorService(new NamedThreadFactory("UserDefinedFunctions",
-                                                      Thread.MIN_PRIORITY,
-                                                      udfClassLoader,
-                                                      new SecurityThreadGroup("UserDefinedFunctions", null, UDFunction::initializeThread)),
-                               "userfunction");
-
     private static final EcjTargetClassLoader targetClassLoader = new EcjTargetClassLoader();
 
     private static final UDFByteCodeVerifier udfByteCodeVerifier = new UDFByteCodeVerifier();
@@ -381,7 +372,7 @@ public final class JavaBasedUDFunction extends UDFunction
     @Override
     protected ExecutorService executor()
     {
-        return executor;
+        return Executor.executor;
     }
 
     @Override
@@ -751,8 +742,24 @@ public final class JavaBasedUDFunction extends UDFunction
         }
     }
 
-    public static void shutdownAndWait(long timeout, TimeUnit unit) throws InterruptedException, TimeoutException
+    /**
+     * Holds the UDF executor apart from JavaBasedUDFunction, so that it can be shut down without initialising
+     * JavaBasedUDFunction, whose static state loads the ECJ compiler.
+     */
+    public static final class Executor
     {
-        ExecutorUtils.shutdownAndWait(timeout, unit, executor);
+        // use a JVM standard ExecutorService as ExecutorPlus references internal
+        // classes, which triggers AccessControlException from the UDF sandbox
+        private static final UDFExecutorService executor =
+            new UDFExecutorService(new NamedThreadFactory("UserDefinedFunctions",
+                                                          Thread.MIN_PRIORITY,
+                                                          UDFunction.udfClassLoader,
+                                                          new SecurityThreadGroup("UserDefinedFunctions", null, UDFunction::initializeThread)),
+                                   "userfunction");
+
+        public static void shutdownAndWait(long timeout, TimeUnit unit) throws InterruptedException, TimeoutException
+        {
+            ExecutorUtils.shutdownAndWait(timeout, unit, executor);
+        }
     }
 }

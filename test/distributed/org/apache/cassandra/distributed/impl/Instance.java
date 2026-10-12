@@ -1083,7 +1083,7 @@ public class Instance extends IsolatedExecutor implements IInvokableInstance
                                 () -> IndexStatusManager.instance.shutdownAndWait(1L, MINUTES),
                                 DiskErrorsHandlerService::close,
                                 () -> ThreadLocalMetrics.shutdownCleaner(1L, MINUTES),
-                                () -> JavaBasedUDFunction.shutdownAndWait(1L, MINUTES),
+                                () -> JavaBasedUDFunction.Executor.shutdownAndWait(1L, MINUTES),
                                 () -> PerSSTableIndexWriter.shutdownAndWait(1L, MINUTES)
             );
 
