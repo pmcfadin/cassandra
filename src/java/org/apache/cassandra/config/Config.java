@@ -958,7 +958,7 @@ public class Config
      * flush is scheduled per that many milliseconds, so a burst of DDL statements pays for a single flush
      * instead of one per statement.
      */
-    public volatile DurationSpec.IntMillisecondsBound schema_flush_coalescing_window = new DurationSpec.IntMillisecondsBound("1000ms");
+    public volatile DurationSpec.IntMillisecondsBound schema_flush_coalescing_window = new DurationSpec.IntMillisecondsBound("0ms");
 
     /**
      * Client mode means that the process is a pure client, that uses C* code base but does
