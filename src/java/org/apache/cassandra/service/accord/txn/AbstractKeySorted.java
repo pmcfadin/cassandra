@@ -229,10 +229,11 @@ public abstract class AbstractKeySorted<T> implements Iterable<T>
             Range itemRange = (Range)getKey((T) l);
             if (itemRange.compareIntersecting((TokenRange)r) == 0)
                 return 1;
+            // an item wholly before the key sorts below it, so the search moves right
             if (((TokenRange) r).end().compareTo(itemRange.end()) > 0)
-                return 1;
-            else
                 return -1;
+            else
+                return 1;
         });
 
         return -1 - idx;

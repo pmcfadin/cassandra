@@ -147,6 +147,42 @@ public class TxnReadTest
         assertRead(read.slice(ranges(r(100, 200), r(300, 400), r(500, 600))), r(100, 200), r(300, 400), r(500, 600));
     }
 
+    /**
+     * Execution looks each piece up with forEachWithKey (TxnRead.readDirect). Each piece of a read sliced into
+     * non-touching runs must find exactly its own item, and a range in a gap must find none.
+     */
+    @Test
+    public void forEachWithKeyFindsEveryNonTouchingItem()
+    {
+        TxnRead read = rangeRead(0, 2000);
+        for (int n = 1; n <= 5; n++)
+        {
+            Range[] pieces = new Range[n];
+            for (int i = 0; i < n; i++)
+                pieces[i] = r(100 + 200L * i, 200 + 200L * i);
+            TxnRead sliced = (TxnRead) read.slice(ranges(pieces));
+            assertRead(sliced, pieces);
+
+            for (int i = 0; i < n; i++)
+            {
+                Range piece = pieces[i];
+                List<Range> found = new ArrayList<>();
+                sliced.forEachWithKey(piece, item -> found.add(item.key().asRange()));
+                assertThat(found).describedAs("n=%d, key %s", n, piece).containsExactly(piece);
+
+                Range inner = r(110 + 200L * i, 190 + 200L * i);
+                List<Range> foundInner = new ArrayList<>();
+                sliced.forEachWithKey(inner, item -> foundInner.add(item.key().asRange()));
+                assertThat(foundInner).describedAs("n=%d, key %s inside %s", n, inner, piece).containsExactly(piece);
+            }
+            for (int i = 0; i <= n; i++)
+            {
+                Range gap = r(10 + 200L * i, 90 + 200L * i);
+                sliced.forEachWithKey(gap, item -> { throw new AssertionError("gap " + gap + " matched " + item.key()); });
+            }
+        }
+    }
+
     @Test
     public void intersectingKeepsEverySubRange()
     {
