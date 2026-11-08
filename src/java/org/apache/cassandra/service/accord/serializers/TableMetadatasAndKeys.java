@@ -193,8 +193,9 @@ public class TableMetadatasAndKeys extends IVersionedWithKeysSerializer.Abstract
     public long serializedSeekableSize(Seekable seekable)
     {
         int i = keys.indexOf(seekable);
-        Invariants.require(i >= 0 || seekable.domain() == Range);
-        return VIntCoding.sizeOfUnsignedVInt(1 + i);
+        if (i >= 0) return VIntCoding.sizeOfUnsignedVInt(1 + i);
+        Invariants.require(seekable.domain() == Range);
+        return VIntCoding.sizeOfUnsignedVInt(0) + KeySerializers.seekable.serializedSize(seekable);
     }
 
     public long serializedKeySize(PartitionKey key)

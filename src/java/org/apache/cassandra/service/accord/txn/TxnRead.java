@@ -20,6 +20,7 @@ package org.apache.cassandra.service.accord.txn;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 
@@ -142,7 +143,8 @@ public class TxnRead extends AbstractKeySorted<TxnNamedRead> implements Read
 
     private static void sortReads(List<TxnNamedRead> reads)
     {
-        if (reads.size() > 1)
+        // the key comparator casts to PartitionKey, so it cannot sort range items; the TxnRead constructor orders those
+        if (reads.size() > 1 && reads.get(0).key().domain() == Domain.Key)
             reads.sort(TXN_NAMED_READ_KEY_COMPARATOR);
     }
 
@@ -270,19 +272,24 @@ public class TxnRead extends AbstractKeySorted<TxnNamedRead> implements Read
             }
             case Range:
             {
-                Ranges ranges = (Ranges) select;
+                // touching sub-ranges are always inside one item (items never touch), so merge them to keep the constructor invariant
+                Ranges ranges = ((Ranges) select).mergeTouching();
                 int i = 0, j = 0;
-                while (i < select.size() && j < items.length)
+                while (i < ranges.size() && j < items.length)
                 {
                     Range range = ranges.get(i);
                     TxnNamedRead read = items[j];
-                    int c = range.compareIntersecting((Range) read.key());
+                    Range itemRange = (Range) read.key();
+                    int c = range.compareIntersecting(itemRange);
                     if (c < 0) ++i;
                     else if (c > 0) ++j;
                     else
                     {
+                        // a single range read may intersect many of the selected ranges, and vice versa,
+                        // so only advance whichever of the two ends first
                         reads.add(read.slice(range));
-                        ++j;
+                        if (itemRange.end().compareTo(range.end()) > 0) ++i;
+                        else ++j;
                     }
                 }
                 break;
@@ -327,48 +334,31 @@ public class TxnRead extends AbstractKeySorted<TxnNamedRead> implements Read
             }
             case Range:
             {
-                int i = 0, j = 0;
-                TxnNamedRead pending = null;
-                while (i < items.length && j < that.items.length)
-                {
-                    TxnNamedRead r1 = this.items[i], r2 = that.items[j];
-                    int c = compareRange(r1, r2);
-                    TxnNamedRead add;
-                    if (c == 0)
-                    {
-                        add = r1.merge(r2);
-                        ++i;
-                        ++j;
-                    }
-                    else if (c < 0)
-                    {
-                        add = r1;
-                        ++i;
-                    }
-                    else
-                    {
-                        add = r2;
-                        ++j;
-                    }
+                // an empty read has no tables or consistency level of its own, so never build the result from one
+                if (items.length == 0) return that;
+                if (that.items.length == 0) return this;
 
-                    if (pending == null) pending = add;
+                TxnNamedRead[] all = Arrays.copyOf(items, items.length + that.items.length);
+                System.arraycopy(that.items, 0, all, items.length, that.items.length);
+                Arrays.sort(all, this::compareRange);
+
+                // touching, overlapping and contained items fold into one, as the constructor requires
+                TxnNamedRead pending = all[0];
+                for (int i = 1; i < all.length; ++i)
+                {
+                    TxnNamedRead add = all[i];
+                    if (((Range) pending.key()).compareTouching((Range) add.key()) == 0)
+                    {
+                        require(pending.txnDataName() == add.txnDataName(), "Cannot merge touching or overlapping reads with different names: %s, %s", pending, add);
+                        pending = pending.merge(add);
+                    }
                     else
                     {
-                        c = compareRange(pending, add);
-                        if (c < 0)
-                        {
-                            reads.add(pending);
-                            pending = add;
-                        }
-                        else
-                        {
-                            require(c == 0);
-                            pending = pending.merge(add);
-                        }
+                        reads.add(pending);
+                        pending = add;
                     }
                 }
-                if (pending != null)
-                    reads.add(pending);
+                reads.add(pending);
                 break;
             }
         }
